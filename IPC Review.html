@@ -1002,10 +1002,10 @@ function renderPrintHost(r){
 }
 
 // Build the PDF as a single custom-sized page that exactly matches the
-// captured content's aspect ratio — no A4 pagination, so nothing gets cut
-// off mid-table. This also makes the file comfortable to open on a phone:
-// one continuous page the viewer can pinch-zoom, instead of content sliced
-// across fixed-height pages.
+// rendered content — no A4 pagination, so nothing gets cut off mid-table.
+// The page size is derived from html2pdf's own captured canvas (not a
+// separate DOM measurement), so the page and the image are always a
+// perfect match — no leftover sliver getting clipped on any edge.
 async function buildPdfBlob(r){
   renderPrintHost(r);
   const host = document.getElementById('printHost');
@@ -1014,21 +1014,38 @@ async function buildPdfBlob(r){
   window.scrollTo(0, 0);
   await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
   const el = document.getElementById('printHostInner');
+  const marginMM = 6;
   let blob;
   try{
-    const canvas = await html2canvas(el, { scale:2, useCORS:true, backgroundColor:'#ffffff', scrollX:0, scrollY:0 });
-    const imgData = canvas.toDataURL('image/jpeg', 0.98);
-    const marginMM = 6;
-    const contentWidthMM = 190; // comfortable width for both A4 and phone screens
+    const worker = html2pdf().set({
+      margin: marginMM,
+      image: { type:'jpeg', quality:0.98 },
+      html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff', scrollX:0, scrollY:0 },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
+    }).from(el);
+
+    await worker.toCanvas();
+    const canvas = await worker.get('canvas');
+    const contentWidthMM = 190;
     const contentHeightMM = contentWidthMM * (canvas.height / canvas.width);
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({
-      unit: 'mm',
-      format: [contentWidthMM + marginMM*2, contentHeightMM + marginMM*2],
-      orientation: 'portrait'
+    await worker.set({
+      jsPDF: {
+        unit:'mm',
+        format: [contentWidthMM + marginMM*2, contentHeightMM + marginMM*2],
+        orientation:'portrait'
+      }
     });
-    pdf.addImage(imgData, 'JPEG', marginMM, marginMM, contentWidthMM, contentHeightMM);
-    blob = pdf.output('blob');
+    blob = await worker.outputPdf('blob');
+  }catch(e){
+    // Fallback: plain A4 with automatic pagination, in case the custom
+    // page-size path fails for some reason — better a paginated PDF than none.
+    blob = await html2pdf().set({
+      margin: 8,
+      image: { type:'jpeg', quality:0.98 },
+      html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff', scrollX:0, scrollY:0 },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
+      pagebreak: { mode:['css','legacy'] }
+    }).from(el).outputPdf('blob');
   }finally{
     host.classList.remove('visible');
     window.scrollTo(prevX, prevY);
