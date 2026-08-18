@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام مراجعة المستخلصات</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#ffffff; --ink:#1e293b; --muted:#64748b;
+    --accent:#1d4ed8; --accent-light:#eff6ff; --border:#e2e8f0;
+    --green:#16a34a; --red:#dc2626; --gray-head:#d9d9d9;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:'Segoe UI', Tahoma, Arial, sans-serif;
+    background:#f1f5f9; color:var(--ink); padding:20px;
+  }
+  .app{max-width:1100px; margin:0 auto;}
+  h1{font-size:22px; margin:0 0 4px;}
+  .sub{color:var(--muted); font-size:13px; margin-bottom:20px;}
+  .layout{display:grid; grid-template-columns: 280px 1fr; gap:16px;}
+  @media (max-width: 860px){ .layout{grid-template-columns:1fr;} }
+
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px;}
+  .card h2{font-size:15px; margin:0 0 12px; color:var(--accent);}
+
+  .sidebar .card{padding:12px;}
+  .review-item{padding:8px 10px; border-radius:8px; cursor:pointer; font-size:13px; border:1px solid transparent; margin-bottom:6px;}
+  .review-item:hover{background:var(--accent-light);}
+  .review-item.active{background:var(--accent-light); border-color:var(--accent);}
+  .review-item .rp{font-weight:600;}
+  .review-item .rc{color:var(--muted); font-size:11px;}
+  .sidebar-search{width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:10px; font-size:13px;}
+
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .grid4{display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
+  @media (max-width:700px){ .grid4{grid-template-columns:1fr 1fr;} }
+
+  label{display:block; font-size:12px; color:var(--muted); margin-bottom:4px;}
+  input[type=text], input[type=number], select{
+    width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:inherit;
+  }
+  .field{margin-bottom:10px;}
+  .with-add{display:flex; gap:6px;}
+  .with-add input, .with-add select{flex:1;}
+  .btn{
+    border:none; border-radius:6px; padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600;
+  }
+  .btn-primary{background:var(--accent); color:#fff;}
+  .btn-secondary{background:#e2e8f0; color:var(--ink);}
+  .btn-danger{background:#fee2e2; color:var(--red);}
+  .btn-sm{padding:5px 9px; font-size:12px;}
+  .btn-icon{width:28px; height:28px; padding:0; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;}
+
+  /* ---- Review rounds (multiple review passes on the same IPC) ---- */
+  table.rounds-table{width:100%; border-collapse:collapse; margin-bottom:8px;}
+  table.rounds-table th, table.rounds-table td{border:1px solid var(--border); padding:4px; font-size:12px;}
+  table.rounds-table th{background:#f8fafc; font-weight:600;}
+  table.rounds-table input[type=text]{border:none; padding:2px; text-align:center;}
+
+  /* ---- Comments table ---- */
+  table.items{width:100%; border-collapse:collapse; margin-top:8px;}
+  table.items th, table.items td{border:1px solid var(--border); padding:6px; font-size:12px; text-align:center; vertical-align:top;}
+  table.items th{background:#f8fafc;}
+  table.items input[type=text], table.items select{border:none; padding:2px; text-align:center; width:100%; font-size:11px;}
+  table.items input[type=checkbox]{width:16px; height:16px;}
+  .comment[contenteditable]{min-height:36px; border:1px solid var(--border); padding:5px; border-radius:4px; font-size:12px; text-align:center; outline:none; background:#fff;}
+  .comment[contenteditable]:focus{border-color:var(--accent);}
+
+  /* ---- Single global formatting toolbar for comments (top-left of the comments card) ---- */
+  .rt-toolbar-global{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
+  .rt-toolbar-global .hint{font-size:11px; color:var(--muted);}
+  .rt-btn{border:1px solid var(--border); background:#fff; border-radius:4px; width:26px; height:26px; font-size:12px; cursor:pointer; padding:0; line-height:1;}
+  .rt-btn:hover{background:var(--accent-light);}
+  .rt-color-group{position:relative;}
+  .rt-color-wrap{display:inline-flex; flex-direction:column; align-items:center; justify-content:center; width:26px; height:26px; border:1px solid var(--border); border-radius:4px; cursor:pointer; background:#fff; padding:0;}
+  .rt-color-icon{font-weight:bold; font-size:12px; line-height:16px; color:#333; font-family:Georgia, serif;}
+  .rt-color-bar{height:4px; width:16px; border-radius:1px; background:#1d4ed8;}
+  .color-popup{position:absolute; top:32px; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,.18); padding:10px; width:210px; z-index:60; display:none;}
+  .color-popup.open{display:block;}
+  .cp-row{display:flex; align-items:center; gap:8px; padding:5px 4px; font-size:12px; cursor:pointer; border-radius:4px;}
+  .cp-row:hover{background:var(--accent-light);}
+  .cp-label{font-size:11px; color:var(--muted); margin:6px 2px 4px;}
+  .cp-grid{display:grid; grid-template-columns:repeat(10, 1fr); gap:4px;}
+  .cp-swatch{width:15px; height:15px; border-radius:2px; border:1px solid rgba(0,0,0,.2); cursor:pointer; display:inline-block;}
+  .cp-more{font-size:12px; color:var(--accent); cursor:pointer; margin-top:8px; text-decoration:underline; text-align:center;}
+
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;}
+  .footer-actions{display:flex; justify-content:space-between; margin-top:14px; flex-wrap:wrap; gap:8px;}
+
+  .status{font-size:12px; color:var(--green); margin-inline-start:8px;}
+  .note{font-size:11px; color:var(--muted); margin-top:6px;}
+
+  /* ==== Print/PDF overlay: rendered fully visible (briefly) so html2canvas can capture it ==== */
+  #printHost{position:fixed; inset:0; background:rgba(15,23,42,.6); z-index:3000; display:none; align-items:flex-start; justify-content:center; overflow:auto; padding:30px 16px;}
+  #printHost.visible{display:flex;}
+  #printHostInner{background:#fff; width:760px; max-width:100%; padding:16px; border-radius:6px;}
+  .pt{border-collapse:collapse; width:100%; table-layout:fixed; font-family:Arial, Helvetica, sans-serif; direction:ltr;}
+  .pt th, .pt td{border:1px solid #000; padding:6px 8px; font-size:12px; text-align:center;}
+  .pt .bar{background:#d9d9d9; text-align:center; font-weight:bold; font-size:14px; padding:6px;}
+  .pt .lbl{font-weight:normal; width:22%; text-align:left;}
+  .pt .val{color:#1d4ed8; text-align:center;}
+  .pt .colhead{background:#f2f2f2; font-weight:bold; text-align:center;}
+  .pt .chk{display:inline-flex; align-items:center; justify-content:center; width:13px; height:13px; border:1px solid #000; font-size:11px; line-height:1;}
+  .pt .commentcell div{margin:0;}
+
+  .confirm-overlay{position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:4000; display:none; align-items:center; justify-content:center;}
+  .confirm-overlay.open{display:flex;}
+  .confirm-box{background:#fff; border-radius:10px; padding:20px; width:300px; max-width:90%; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25);}
+  .confirm-box p{font-size:14px; margin:0 0 4px;}
+  .confirm-actions{display:flex; gap:8px; justify-content:center; margin-top:16px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>نظام مراجعة المستخلصات (IPC Review)</h1>
+  <div class="sub">تسجيل ملاحظات مراجعة مستخلصات الاستشاري — حفظ تلقائي، تصدير Excel وPDF، وطباعة بنفس تنسيق النموذج الرسمي.</div>
+
+  <div class="layout">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="card">
+        <h2>المراجعات المحفوظة</h2>
+        <input class="sidebar-search" id="search" placeholder="بحث بالمشروع أو الشركة...">
+        <div id="reviewList"></div>
+        <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px;" onclick="newReview()">+ مراجعة جديدة</button>
+      </div>
+
+      <div class="card">
+        <h2>إضافة مشروع / شركة</h2>
+        <div class="field">
+          <label>اسم المشروع</label>
+          <input type="text" id="newProjectName" placeholder="اسم المشروع">
+        </div>
+        <div class="field">
+          <label>الشركة التابعة له</label>
+          <input type="text" id="newCompanyName" placeholder="اسم الشركة">
+        </div>
+        <div class="field">
+          <label>نوع المشروع</label>
+          <select id="newProjectType">
+            <option value="Contractor">مقاول (Contractor)</option>
+            <option value="Consultant">استشاري (Consultant)</option>
+          </select>
+        </div>
+        <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="addProjectCompanyPair()">إضافة</button>
+      </div>
+
+      <div class="card">
+        <h2>إضافة قسم جديد</h2>
+        <div class="with-add">
+          <input type="text" id="newSectionName" placeholder="اسم القسم">
+          <button class="btn btn-secondary btn-sm" onclick="addSectionSimple()">إضافة</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main form -->
+    <div>
+      <div class="card">
+        <h2>بيانات المستخلص (IPC Details)</h2>
+        <div class="grid2">
+          <div class="field">
+            <label>المشروع</label>
+            <select id="project" onchange="onProjectChange()"></select>
+          </div>
+          <div class="field">
+            <label>الشركة</label>
+            <select id="company"></select>
+          </div>
+        </div>
+        <div class="grid4">
+          <div class="field"><label>رقم المستخلص (IPC No.)</label><input type="text" id="ipcNo"></div>
+          <div class="field"><label>من تاريخ</label><input type="text" id="periodFrom" placeholder="مثال: 16/11/2025"></div>
+          <div class="field"><label>إلى تاريخ</label><input type="text" id="periodTo" placeholder="مثال: 22/4/2026"></div>
+          <div class="field"><label>حالة المراجعة</label>
+            <select id="statusVal">
+              <option value="Open">قيد المراجعة</option>
+              <option value="Corrected">تم التصحيح</option>
+              <option value="Closed">مغلقة</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>بيانات المراجعة (Review Details)</h2>
+        <div class="field" style="max-width:260px;">
+          <label>اسم المراجع</label>
+          <input type="text" id="reviewerName" value="Mohammed">
+        </div>
+        <label>جولات المراجعة لهذا المستخلص</label>
+        <table class="rounds-table" id="roundsTable">
+          <thead>
+            <tr>
+              <th style="width:18%">رقم المراجعة</th>
+              <th style="width:32%">تاريخ المراجعة</th>
+              <th style="width:32%">تاريخ الاستلام</th>
+              <th style="width:10%"></th>
+            </tr>
+          </thead>
+          <tbody id="roundsBody"></tbody>
+        </table>
+        <button class="btn btn-secondary btn-sm" onclick="addRound()">+ إضافة مراجعة</button>
+      </div>
+
+      <div class="card">
+        <h2>الملاحظات (Comments)</h2>
+        <div class="rt-toolbar-global">
+          <button type="button" id="rtBoldBtn" class="rt-btn" title="عريض"><b>B</b></button>
+          <div class="rt-color-group">
+            <button type="button" class="rt-color-wrap" id="rtColorBtn" title="لون الخط">
+              <span class="rt-color-icon">A</span>
+              <span class="rt-color-bar" id="rtColorBar"></span>
+            </button>
+            <div class="color-popup" id="colorPopup">
+              <div class="cp-row" data-color="#000000"><span class="cp-swatch" style="background:#000000"></span> Automatic</div>
+              <div class="cp-label">Standard Colors</div>
+              <div class="cp-grid" id="cpStandardGrid"></div>
+              <div class="cp-more" id="cpMoreColors">More colors…</div>
+            </div>
+          </div>
+          <input type="color" id="rtColorInputHidden" style="display:none;">
+        </div>
+        <table class="items" id="itemsTable">
+          <thead>
+            <tr>
+              <th style="width:5%">#</th>
+              <th style="width:22%">القسم (Section No)</th>
+              <th style="width:8%">No. V</th>
+              <th>الملاحظة (Comment)</th>
+              <th style="width:8%">تم التصحيح</th>
+              <th style="width:6%"></th>
+            </tr>
+          </thead>
+          <tbody id="itemsBody"></tbody>
+        </table>
+        <div class="toolbar">
+          <button class="btn btn-secondary btn-sm" onclick="addItem()">+ إضافة ملاحظة</button>
+        </div>
+      </div>
+
+      <div class="footer-actions">
+        <div>
+          <button class="btn btn-primary" onclick="saveReview()">حفظ المراجعة</button>
+          <button class="btn btn-danger" onclick="deleteReview()">حذف</button>
+          <span class="status" id="statusMsg"></span>
+        </div>
+        <div>
+          <button class="btn btn-secondary" onclick="exportExcel()">تصدير Excel</button>
+          <button class="btn btn-secondary" onclick="exportPdf()">تصدير PDF</button>
+          <button class="btn btn-secondary" onclick="printReview()">طباعة</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="printHost"><div id="printHostInner"></div></div>
+
+<div id="confirmModal" class="confirm-overlay">
+  <div class="confirm-box">
+    <p id="confirmMsg"></p>
+    <div class="confirm-actions">
+      <button class="btn btn-danger" id="confirmYes">حذف</button>
+      <button class="btn btn-secondary" id="confirmNo">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentId = null;
+let projectCompanyMap = {}; // project -> { company, type }
+let contractorSections = [];
+let consultantSections = [];
+let reviews = {}; // id -> review object
+const savedRanges = new WeakMap();
+let activeComment = null;
+
+// ---- Storage: three tiers, tried in order —
+// 1) Firebase Firestore, if FIREBASE_CONFIG below is filled in (real
+//    cross-device sync: laptop and phone both read/write the same cloud data).
+// 2) Claude's window.storage, when running inside a Claude.ai artifact.
+// 3) localStorage, as a last-resort per-device fallback so the app never breaks.
+//
+// To turn on cross-device sync, fill in FIREBASE_CONFIG with your own free
+// Firebase project's config (see setup steps provided separately) and
+// redeploy. Leave it empty to keep using local-only storage.
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAWqcHoa21yxx8DFVwdX3O3ep4pzH1vZ_Y",
+  authDomain: "ipc-review.firebaseapp.com",
+  projectId: "ipc-review",
+  storageBucket: "ipc-review.firebasestorage.app",
+  messagingSenderId: "928623090458",
+  appId: "1:928623090458:web:dc0f2717d01d1b8ca56aa3"
+};
+
+let db = null;
+if(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && typeof firebase !== 'undefined'){
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+  }catch(e){ db = null; }
+}
+
+const hasClaudeStorage = (typeof window.storage !== 'undefined') && window.storage && typeof window.storage.get === 'function';
+const KV_COLLECTION = 'ipc_review_kv';
+
+const storage = {
+  async get(key, shared){
+    if(db){
+      try{
+        const doc = await db.collection(KV_COLLECTION).doc(key).get();
+        if(doc.exists) return { key, value: doc.data().value, shared };
+      }catch(e){ /* fall through */ }
+    }
+    if(hasClaudeStorage){
+      try{ return await window.storage.get(key, shared); }catch(e){ /* fall through */ }
+    }
+    try{
+      const v = localStorage.getItem('ipc_' + key);
+      return v === null ? null : { key, value: v, shared };
+    }catch(e){ return null; }
+  },
+  async set(key, value, shared){
+    if(db){
+      try{
+        await db.collection(KV_COLLECTION).doc(key).set({ value });
+        return { key, value, shared };
+      }catch(e){ /* fall through */ }
+    }
+    if(hasClaudeStorage){
+      try{ return await window.storage.set(key, value, shared); }catch(e){ /* fall through */ }
+    }
+    try{
+      localStorage.setItem('ipc_' + key, value);
+      return { key, value, shared };
+    }catch(e){ return null; }
+  },
+  async delete(key, shared){
+    if(db){
+      try{
+        await db.collection(KV_COLLECTION).doc(key).delete();
+        return { key, deleted:true, shared };
+      }catch(e){ /* fall through */ }
+    }
+    if(hasClaudeStorage){
+      try{ return await window.storage.delete(key, shared); }catch(e){ /* fall through */ }
+    }
+    try{ localStorage.removeItem('ipc_' + key); return { key, deleted:true, shared }; }catch(e){ return null; }
+  }
+};
+
+
+const DEFAULT_PROJECT_COMPANY = [
+  ["Advanced Co","Advanced Co","Contractor"],
+  ["SAPAC-TRQR","SAPAC","Contractor"],
+  ["Parsons","Parsons","Consultant"],
+  ["SAPAC - SSRR","SAPAC","Contractor"],
+  ["Yuksel","Yuksel","Contractor"],
+  ["PMCM1 WSP","WSP","Consultant"],
+  ["RTCC IC JV","RTCC IC JV","Contractor"],
+  ["AAIC CHEC JV","AAIC CHEC JV","Contractor"],
+  ["PMCM2 WSP","WSP","Consultant"],
+  ["Almabani-KAFD","Almabani","Contractor"],
+  ["PMCM4 IDS","IDS","Consultant"],
+  ["KSxABSR Shade","KSxABSR Shade","Contractor"],
+  ["Almabani-Thumama","Almabani","Contractor"],
+  ["PMCM3 IDS","IDS","Consultant"],
+  ["Almabani-IASR","Almabani","Contractor"],
+  ["Almabani-PTAA1","Almabani","Contractor"],
+  ["Ayuni IMR","Ayuni","Contractor"],
+  ["PMCM7 IDOM","IDOM","Consultant"],
+  ["PMCM6 DAR","DAR","Consultant"],
+  ["Bin laden-Dirab","Bin laden-Dirab","Contractor"],
+  ["RTCC-TR","RTCC-TR","Contractor"],
+  ["SAJCO-CI G2","SAJCO-CI G2","Contractor"],
+  ["Freyssinet - OBA","Freyssinet - OBA","Contractor"],
+  ["PMCM5 - Dar Alriyadh","Dar Alriyadh","Consultant"],
+  ["SAPAC -Jeddah R","SAPAC","Contractor"],
+  ["Yuksel - TMER","Yuksel","Contractor"]
+];
+
+const SECTIONS_DEFAULTS_VERSION = 'v2-checklist-first-2026-08-09';
+
+const DEFAULT_CONTRACTOR_SECTIONS = [
+  { no:'', name:'Checklist' },
+  { no:'1', name:'Covering Letters' },
+  { no:'2', name:'Green letter' },
+  { no:'3', name:'Project Payment Log' },
+  { no:'4', name:'E-Tax invoice' },
+  { no:'5', name:'Payment Summary' },
+  { no:'6', name:'BOQ Summary' },
+  { no:'7', name:'BOQ' },
+  { no:'8', name:'TAKE-OFF Sheet' },
+  { no:'9', name:'The contract & Site Handover' },
+  { no:'10', name:'Guarantee Certificates' },
+  { no:'11', name:'all Risk Insurance' },
+  { no:'12', name:'Plant and Equipments Insurance' },
+  { no:'13', name:'Workmen Insurance' },
+  { no:'14', name:'Third Party Insurance' },
+  { no:'15', name:'Commercial Registration' },
+  { no:'16', name:'Certificate of Zakat' },
+  { no:'17', name:'The Saudization' },
+  { no:'18', name:'GOSI' },
+  { no:'19', name:'Wage Protection' },
+  { no:'20', name:'Chambers of Commerce' },
+  { no:'21', name:'VAT Certificate' },
+  { no:'22', name:'Classification Certificate' },
+  { no:'23', name:'Municipal License' },
+  { no:'24', name:'USB' }
+];
+
+const DEFAULT_CONSULTANT_SECTIONS = [
+  { no:'', name:'Checklist' },
+  { no:'1', name:'Covering Letters' },
+  { no:'2', name:'Green letter' },
+  { no:'3', name:'Professional Fees' },
+  { no:'4', name:'Attendance sheet' },
+  { no:'5', name:'Project Payment Log' },
+  { no:'6', name:'E-Tax invoice' },
+  { no:'7', name:'Payment Summary' },
+  { no:'8', name:'Staff Approval Letter' },
+  { no:'9', name:'Leave Forms' },
+  { no:'10', name:'Monthly report Summary' },
+  { no:'11', name:'BOQ' },
+  { no:'12', name:'The contract' },
+  { no:'13', name:'Guarantee Certificates' },
+  { no:'14', name:'Commercial Registration' },
+  { no:'15', name:'Certificate of Zakat' },
+  { no:'16', name:'The Saudization' },
+  { no:'17', name:'GOSI' },
+  { no:'18', name:'Wage Protection' },
+  { no:'19', name:'Chambers of Commerce' },
+  { no:'20', name:'VAT Certificate' },
+  { no:'21', name:'Municipal License' },
+  { no:'22', name:'USB' }
+];
+
+function uid(){ return 'r' + Date.now() + Math.random().toString(36).slice(2,7); }
+
+async function loadAll(){
+ try{
+  try{
+    const m = await storage.get('meta:project-company-map');
+    projectCompanyMap = (m && m.value) ? JSON.parse(m.value) : Object.fromEntries(DEFAULT_PROJECT_COMPANY.map(([p,c,t]) => [p, {company:c, type:t}]));
+  }catch(e){
+    projectCompanyMap = Object.fromEntries(DEFAULT_PROJECT_COMPANY.map(([p,c,t]) => [p, {company:c, type:t}]));
+  }
+  // Only the bare "PMCM7" entry should be removed — "PMCM7 IDOM" is a real project and must stay.
+  if('PMCM7' in projectCompanyMap){
+    delete projectCompanyMap['PMCM7'];
+  }
+  if(!('PMCM7 IDOM' in projectCompanyMap)){
+    projectCompanyMap['PMCM7 IDOM'] = { company:'IDOM', type:'Consultant' };
+  }
+  await storage.set('meta:project-company-map', JSON.stringify(projectCompanyMap), false);
+  try{
+    const cs = await storage.get('meta:contractor-sections');
+    contractorSections = (cs && cs.value) ? JSON.parse(cs.value) : DEFAULT_CONTRACTOR_SECTIONS.slice();
+  }catch(e){ contractorSections = DEFAULT_CONTRACTOR_SECTIONS.slice(); }
+  try{
+    const vs = await storage.get('meta:consultant-sections');
+    consultantSections = (vs && vs.value) ? JSON.parse(vs.value) : DEFAULT_CONSULTANT_SECTIONS.slice();
+  }catch(e){ consultantSections = DEFAULT_CONSULTANT_SECTIONS.slice(); }
+  // One-time reset to the confirmed/edited section names (baked into the code
+  // itself now) — runs once per browser/site via the version flag below.
+  try{
+    const ver = await storage.get('meta:sections-version');
+    if(!ver || ver.value !== SECTIONS_DEFAULTS_VERSION){
+      contractorSections = DEFAULT_CONTRACTOR_SECTIONS.slice();
+      consultantSections = DEFAULT_CONSULTANT_SECTIONS.slice();
+      await persistSections('contractor');
+      await persistSections('consultant');
+      await storage.set('meta:sections-version', SECTIONS_DEFAULTS_VERSION, false);
+    }
+  }catch(e){}
+  const fixedContractor = ensureChecklistNoNumber(contractorSections);
+  const fixedConsultant = ensureChecklistNoNumber(consultantSections);
+  if(fixedContractor.changed){ contractorSections = fixedContractor.list; await persistSections('contractor'); }
+  if(fixedConsultant.changed){ consultantSections = fixedConsultant.list; await persistSections('consultant'); }
+  try{
+    const idx = await storage.get('meta:review-ids');
+    const ids = idx && idx.value ? JSON.parse(idx.value) : [];
+    for(const id of ids){
+      try{
+        const r = await storage.get('review:' + id);
+        if(r && r.value) reviews[id] = JSON.parse(r.value);
+      }catch(e){}
+    }
+  }catch(e){}
+ }catch(e){
+  // Absolute safety net: even if something above throws unexpectedly,
+  // fall back to plain defaults so the dropdowns are never left empty.
+  if(Object.keys(projectCompanyMap).length === 0){
+    projectCompanyMap = Object.fromEntries(DEFAULT_PROJECT_COMPANY.map(([p,c,t]) => [p, {company:c, type:t}]));
+  }
+  if(contractorSections.length === 0) contractorSections = DEFAULT_CONTRACTOR_SECTIONS.slice();
+  if(consultantSections.length === 0) consultantSections = DEFAULT_CONSULTANT_SECTIONS.slice();
+ }
+  renderProjectSelect();
+  renderCompanySelect();
+  renderReviewList();
+}
+
+// Make sure there's exactly one plain (no-number) "Checklist" entry, and that
+// it sits first in the list.
+function ensureChecklistNoNumber(list){
+  const others = list.filter(s => s.name.trim().toLowerCase() !== 'checklist');
+  const newList = [{ no:'', name:'Checklist' }, ...others];
+  const unchanged = list.length === newList.length &&
+    list[0] && list[0].name.trim().toLowerCase() === 'checklist' && !list[0].no &&
+    list.every((s,i) => s.no === newList[i].no && s.name === newList[i].name);
+  return { list: newList, changed: !unchanged };
+}
+
+function renderProjectSelect(){
+  const sel = document.getElementById('project');
+  const names = Object.keys(projectCompanyMap).sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML = names.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+}
+function renderCompanySelect(){
+  const sel = document.getElementById('company');
+  const companies = Array.from(new Set(Object.values(projectCompanyMap).map(v => v.company))).sort((a,b)=>a.localeCompare(b));
+  sel.innerHTML = companies.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+}
+function onProjectChange(){
+  const project = document.getElementById('project').value;
+  const info = projectCompanyMap[project];
+  if(info) document.getElementById('company').value = info.company;
+  refreshAllSectionSelects();
+}
+
+function escapeHtml(s){
+  return (s||'').toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+async function addProjectCompanyPair(){
+  const p = document.getElementById('newProjectName').value.trim();
+  const c = document.getElementById('newCompanyName').value.trim();
+  const t = document.getElementById('newProjectType').value;
+  if(!p || !c) return;
+  projectCompanyMap[p] = { company:c, type:t };
+  document.getElementById('newProjectName').value = '';
+  document.getElementById('newCompanyName').value = '';
+  renderProjectSelect();
+  renderCompanySelect();
+  document.getElementById('project').value = p;
+  document.getElementById('company').value = c;
+  refreshAllSectionSelects();
+  await storage.set('meta:project-company-map', JSON.stringify(projectCompanyMap), false);
+}
+
+// ---- Editable section-list managers (contractor / consultant) ----
+function listAndKeyFor(type){
+  return type === 'contractor'
+    ? { list: contractorSections, key: 'meta:contractor-sections' }
+    : { list: consultantSections, key: 'meta:consultant-sections' };
+}
+async function persistSections(type){
+  const { list, key } = listAndKeyFor(type);
+  await storage.set(key, JSON.stringify(list), false);
+}
+// Single simple "add section" control — figures out contractor vs consultant
+// from whichever project is currently selected in the IPC Details form.
+async function addSectionSimple(){
+  const projectVal = document.getElementById('project').value;
+  const info = projectCompanyMap[projectVal];
+  if(!info || !info.type){
+    setStatus('اختر مشروعاً أولاً من "بيانات المستخلص"');
+    return;
+  }
+  const name = document.getElementById('newSectionName').value.trim();
+  if(!name) return;
+  const type = info.type === 'Contractor' ? 'contractor' : 'consultant';
+  const { list } = listAndKeyFor(type);
+  list.push({ no: String(list.length + 1), name });
+  document.getElementById('newSectionName').value = '';
+  await persistSections(type);
+  refreshAllSectionSelects();
+  setStatus(`أُضيف إلى قائمة ${type === 'contractor' ? 'المقاول' : 'الاستشاري'} ✓`);
+}
+
+// ---- Section No <select> per comment row, driven by the selected project's type ----
+function currentSectionList(){
+  const project = document.getElementById('project').value;
+  const info = projectCompanyMap[project];
+  if(!info || !info.type) return null;
+  return info.type === 'Contractor' ? contractorSections : consultantSections;
+}
+function sectionOptionsHtml(selectedValue){
+  const list = currentSectionList();
+  if(!list){
+    let html = `<option value="">اختر المشروع أولاً</option>`;
+    if(selectedValue) html += `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>`;
+    return html;
+  }
+  let html = '<option value="">—</option>';
+  let found = false;
+  html += list.map(s => {
+    const val = s.no ? `${s.no}. ${s.name}` : s.name;
+    if(val === selectedValue) found = true;
+    return `<option value="${escapeHtml(val)}" ${val===selectedValue?'selected':''}>${escapeHtml(val)}</option>`;
+  }).join('');
+  if(selectedValue && !found){
+    html += `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(selectedValue)}</option>`;
+  }
+  return html;
+}
+function refreshAllSectionSelects(){
+  document.querySelectorAll('#itemsBody tr').forEach(tr => {
+    const sel = tr.querySelector('.sectionNo');
+    if(!sel) return;
+    const current = sel.value;
+    sel.innerHTML = sectionOptionsHtml(current);
+  });
+}
+
+// ---- Review rounds (Review No / Review Date / Received Date), stacked ----
+function addRound(reviewNo, reviewDate, receivedDate){
+  const tbody = document.getElementById('roundsBody');
+  if(reviewNo === undefined) reviewNo = String(tbody.children.length + 1);
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td><input type="text" class="roundNo" value="${escapeHtml(reviewNo||'')}"></td>
+    <td><input type="text" class="roundDate" placeholder="مثال: 5/17/2026" value="${escapeHtml(reviewDate||'')}"></td>
+    <td><input type="text" class="roundReceived" placeholder="مثال: 4/8/2026" value="${escapeHtml(receivedDate||'')}"></td>
+    <td><button class="btn btn-danger btn-icon" onclick="this.closest('tr').remove();">×</button></td>
+  `;
+  tbody.appendChild(row);
+}
+function collectRounds(){
+  return Array.from(document.querySelectorAll('#roundsBody tr')).map(tr => ({
+    reviewNo: tr.querySelector('.roundNo').value,
+    reviewDate: tr.querySelector('.roundDate').value,
+    receivedDate: tr.querySelector('.roundReceived').value
+  }));
+}
+
+function newReview(){
+  currentId = null;
+  document.getElementById('ipcNo').value = '';
+  document.getElementById('periodFrom').value = '';
+  document.getElementById('periodTo').value = '';
+  document.getElementById('statusVal').value = 'Open';
+  document.getElementById('reviewerName').value = 'Mohammed';
+  document.getElementById('roundsBody').innerHTML = '';
+  addRound('1', '', '');
+  document.getElementById('itemsBody').innerHTML = '';
+  addItem();
+  renderReviewList();
+  setStatus('');
+}
+
+// ---- Comment cells (plain contenteditable; formatting comes from the single global toolbar) ----
+function vNoOptions(selected){
+  const opts = ['', '1', '2', '1&2'];
+  return opts.map(o => `<option value="${o}" ${o===(selected||'')?'selected':''}>${o||'—'}</option>`).join('');
+}
+function addItem(sectionNo='', vNo='', commentHtml='', corrected=false){
+  const tbody = document.getElementById('itemsBody');
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td class="rownum"></td>
+    <td><select class="sectionNo">${sectionOptionsHtml(sectionNo)}</select></td>
+    <td><select class="vNo">${vNoOptions(vNo)}</select></td>
+    <td><div class="comment" contenteditable="true" dir="auto"></div></td>
+    <td><input type="checkbox" class="corrected" ${corrected ? 'checked' : ''}></td>
+    <td><button class="btn btn-danger btn-icon" onclick="this.closest('tr').remove(); renumber();">×</button></td>
+  `;
+  tbody.appendChild(row);
+  row.querySelector('.comment').innerHTML = commentHtml || '';
+  renumber();
+}
+
+document.addEventListener('focusin', (e) => {
+  if(e.target.classList && e.target.classList.contains('comment')) activeComment = e.target;
+});
+document.addEventListener('selectionchange', () => {
+  const sel = window.getSelection();
+  if(!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  let node = range.commonAncestorContainer;
+  if(node.nodeType === 3) node = node.parentElement;
+  const editable = node && node.closest ? node.closest('.comment[contenteditable]') : null;
+  if(editable) savedRanges.set(editable, range.cloneRange());
+});
+
+document.getElementById('rtBoldBtn').addEventListener('mousedown', (e) => e.preventDefault());
+document.getElementById('rtBoldBtn').addEventListener('click', () => {
+  if(!activeComment) return;
+  const range = savedRanges.get(activeComment);
+  activeComment.focus();
+  if(range){ const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+  document.execCommand('bold');
+});
+document.getElementById('rtColorInputHidden').addEventListener('input', (e) => {
+  applyCommentColor(e.target.value);
+});
+
+const STANDARD_COLORS = ['#C00000','#FF0000','#FFC000','#FFFF00','#92D050','#00B050','#00B0F0','#0070C0','#002060','#7030A0'];
+document.getElementById('cpStandardGrid').innerHTML = STANDARD_COLORS.map(c =>
+  `<span class="cp-swatch" style="background:${c}" data-color="${c}" title="${c}"></span>`
+).join('');
+
+function applyCommentColor(color){
+  document.getElementById('rtColorBar').style.background = color;
+  if(!activeComment) return;
+  const range = savedRanges.get(activeComment);
+  activeComment.focus();
+  if(range){ const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+  document.execCommand('foreColor', false, color);
+}
+
+const colorPopup = document.getElementById('colorPopup');
+document.getElementById('rtColorBtn').addEventListener('mousedown', (e) => e.preventDefault());
+document.getElementById('rtColorBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  colorPopup.classList.toggle('open');
+});
+colorPopup.addEventListener('mousedown', (e) => {
+  if(e.target.id !== 'cpMoreColors') e.preventDefault();
+});
+colorPopup.addEventListener('click', (e) => {
+  const sw = e.target.closest('[data-color]');
+  if(sw){
+    applyCommentColor(sw.dataset.color);
+    colorPopup.classList.remove('open');
+  }
+});
+document.getElementById('cpMoreColors').addEventListener('click', () => {
+  document.getElementById('rtColorInputHidden').click();
+  colorPopup.classList.remove('open');
+});
+document.addEventListener('click', (e) => {
+  if(colorPopup.classList.contains('open') && !colorPopup.contains(e.target) && e.target.id !== 'rtColorBtn'){
+    colorPopup.classList.remove('open');
+  }
+});
+
+function renumber(){
+  document.querySelectorAll('#itemsBody tr').forEach((tr,i) => {
+    tr.querySelector('.rownum').textContent = i+1;
+  });
+}
+
+function collectForm(){
+  const items = [];
+  document.querySelectorAll('#itemsBody tr').forEach((tr,i) => {
+    const commentDiv = tr.querySelector('.comment');
+    items.push({
+      count: i+1,
+      sectionNo: tr.querySelector('.sectionNo').value,
+      vNo: tr.querySelector('.vNo').value,
+      commentHtml: commentDiv.innerHTML,
+      commentText: commentDiv.innerText || commentDiv.textContent || '',
+      corrected: tr.querySelector('.corrected').checked
+    });
+  });
+  return {
+    id: currentId || uid(),
+    project: document.getElementById('project').value,
+    company: document.getElementById('company').value,
+    ipcNo: document.getElementById('ipcNo').value,
+    periodFrom: document.getElementById('periodFrom').value,
+    periodTo: document.getElementById('periodTo').value,
+    statusVal: document.getElementById('statusVal').value,
+    reviewerName: document.getElementById('reviewerName').value,
+    rounds: collectRounds(),
+    items,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function saveReview(){
+  const r = collectForm();
+  currentId = r.id;
+  reviews[r.id] = r;
+  try{
+    await storage.set('review:' + r.id, JSON.stringify(r), false);
+    const ids = Object.keys(reviews);
+    await storage.set('meta:review-ids', JSON.stringify(ids), false);
+    setStatus('تم الحفظ ✓');
+    renderReviewList();
+  }catch(e){
+    setStatus('فشل الحفظ');
+  }
+}
+
+async function deleteReview(){
+  if(!currentId){ newReview(); return; }
+  const ok = await showConfirm('حذف هذه المراجعة نهائياً؟ لا يمكن التراجع عن هذا الإجراء.');
+  if(!ok) return;
+  try{
+    await storage.delete('review:' + currentId, false);
+  }catch(e){}
+  delete reviews[currentId];
+  const ids = Object.keys(reviews);
+  await storage.set('meta:review-ids', JSON.stringify(ids), false);
+  newReview();
+  renderReviewList();
+}
+
+function showConfirm(message){
+  return new Promise(resolve => {
+    document.getElementById('confirmMsg').textContent = message;
+    const overlay = document.getElementById('confirmModal');
+    overlay.classList.add('open');
+    const yesBtn = document.getElementById('confirmYes');
+    const noBtn = document.getElementById('confirmNo');
+    function cleanup(result){
+      overlay.classList.remove('open');
+      yesBtn.removeEventListener('click', onYes);
+      noBtn.removeEventListener('click', onNo);
+      resolve(result);
+    }
+    function onYes(){ cleanup(true); }
+    function onNo(){ cleanup(false); }
+    yesBtn.addEventListener('click', onYes);
+    noBtn.addEventListener('click', onNo);
+  });
+}
+
+function setStatus(msg){
+  const el = document.getElementById('statusMsg');
+  el.textContent = msg;
+  if(msg) setTimeout(()=>{ if(el.textContent===msg) el.textContent=''; }, 3000);
+}
+
+function renderReviewList(){
+  const q = (document.getElementById('search').value || '').toLowerCase();
+  const list = document.getElementById('reviewList');
+  const sorted = Object.values(reviews).sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const filtered = sorted.filter(r =>
+    !q || (r.project||'').toLowerCase().includes(q) || (r.company||'').toLowerCase().includes(q) || (r.ipcNo||'').toLowerCase().includes(q)
+  );
+  if(filtered.length === 0){
+    list.innerHTML = '<div style="font-size:12px; color:#94a3b8;">لا توجد مراجعات محفوظة</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(r => {
+    const rounds = r.rounds && r.rounds.length ? r.rounds : [{reviewNo:r.reviewNo, reviewDate:r.reviewDate}];
+    const last = rounds[rounds.length-1] || {};
+    return `
+    <div class="review-item ${r.id===currentId?'active':''}" onclick="loadReview('${r.id}')">
+      <div class="rp">${escapeHtml(r.project)} — IPC ${escapeHtml(r.ipcNo||'-')}</div>
+      <div class="rc">${escapeHtml(r.company)} · ${rounds.length} مراجعة (آخرها رقم ${escapeHtml(last.reviewNo||'-')} · ${escapeHtml(last.reviewDate||'')})</div>
+    </div>
+  `;}).join('');
+}
+
+function loadReview(id){
+  const r = reviews[id];
+  if(!r) return;
+  currentId = id;
+  if(r.project && !(r.project in projectCompanyMap)){ projectCompanyMap[r.project] = { company: r.company || '', type: 'Contractor' }; renderProjectSelect(); renderCompanySelect(); }
+  document.getElementById('project').value = r.project;
+  document.getElementById('company').value = r.company;
+  document.getElementById('ipcNo').value = r.ipcNo || '';
+  document.getElementById('periodFrom').value = r.periodFrom || '';
+  document.getElementById('periodTo').value = r.periodTo || '';
+  document.getElementById('statusVal').value = r.statusVal || 'Open';
+  document.getElementById('reviewerName').value = r.reviewerName || '';
+  document.getElementById('roundsBody').innerHTML = '';
+  const rounds = (r.rounds && r.rounds.length) ? r.rounds : [{reviewNo:r.reviewNo||'1', reviewDate:r.reviewDate||'', receivedDate:r.receivedDate||''}];
+  rounds.forEach(rd => addRound(rd.reviewNo, rd.reviewDate, rd.receivedDate));
+  document.getElementById('itemsBody').innerHTML = '';
+  (r.items && r.items.length ? r.items : [{}]).forEach(it => addItem(it.sectionNo, it.vNo, it.commentHtml || it.comment || '', it.corrected));
+  renderReviewList();
+  setStatus('');
+}
+
+document.getElementById('search').addEventListener('input', renderReviewList);
+
+// ---- Convert a rich-text comment DIV into ExcelJS richText runs (preserves bold + color) ----
+function rgbToHex(rgbStr){
+  const m = rgbStr && rgbStr.match(/\d+/g);
+  if(!m) return null;
+  return m.slice(0,3).map(x => parseInt(x).toString(16).padStart(2,'0')).join('').toUpperCase();
+}
+function domToRuns(node, state, runs){
+  node.childNodes.forEach(child => {
+    if(child.nodeType === 3){
+      if(child.textContent) runs.push({ text: child.textContent, bold: state.bold, color: state.color });
+    }else if(child.nodeType === 1){
+      const tag = child.tagName;
+      const next = Object.assign({}, state);
+      if(tag === 'B' || tag === 'STRONG') next.bold = true;
+      const styleColor = child.style && child.style.color;
+      if(styleColor){ const hex = rgbToHex(styleColor); if(hex) next.color = hex; }
+      if(child.color){ const hex = rgbToHex(child.color) || (child.color[0]==='#' ? child.color.slice(1) : null); if(hex) next.color = hex; }
+      domToRuns(child, next, runs);
+      if(tag === 'DIV' || tag === 'P' || tag === 'BR'){ runs.push({ text:'\n', bold:false, color:null }); }
+    }
+  });
+  return runs;
+}
+function commentHtmlToRuns(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html || '';
+  const runs = domToRuns(tmp, { bold:false, color:null }, []);
+  while(runs.length && runs[runs.length-1].text === '\n') runs.pop();
+  if(runs.length === 0) return [{ text:'', bold:false, color:'1D4ED8' }];
+  return runs;
+}
+
+// ---- Excel export (ExcelJS supports real fills/borders/fonts) ----
+async function exportExcel(){
+  const r = collectForm();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('IPC Review', { views:[{ rightToLeft:false }] });
+  ws.columns = [ {width:10}, {width:26}, {width:10}, {width:75}, {width:12} ];
+
+  const thin = { style:'thin', color:{argb:'FF000000'} };
+  const border = { top:thin, bottom:thin, left:thin, right:thin };
+  const grayFill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFD9D9D9'} };
+  const headFill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFF2F2F2'} };
+  const blueFont = { color:{argb:'FF1D4ED8'} };
+
+  function barRow(text){
+    const row = ws.addRow([text]);
+    ws.mergeCells(row.number, 1, row.number, 5);
+    row.getCell(1).fill = grayFill;
+    row.getCell(1).font = { bold:true, size:12 };
+    row.getCell(1).alignment = { horizontal:'center', vertical:'middle' };
+    row.eachCell({includeEmpty:true}, c => c.border = border);
+    row.height = 20;
+  }
+  function labelRow(label, value){
+    const row = ws.addRow([label, value]);
+    row.getCell(1).font = { bold:false };
+    row.getCell(1).alignment = { horizontal:'left', vertical:'middle' };
+    row.getCell(2).font = blueFont;
+    row.getCell(2).alignment = { horizontal:'center', vertical:'middle' };
+    ws.mergeCells(row.number, 2, row.number, 5);
+    row.eachCell({includeEmpty:true}, c => c.border = border);
+    row.height = 18;
+  }
+
+  barRow('IPC Details');
+  labelRow('Project', r.project);
+  labelRow('Company', r.company);
+  labelRow('IPC', r.ipcNo);
+  labelRow('Period From', r.periodFrom);
+  labelRow('Period To', r.periodTo);
+  barRow('Review Details');
+  labelRow("Reviewer's Name", r.reviewerName);
+  (r.rounds && r.rounds.length ? r.rounds : []).forEach((rd, i) => {
+    labelRow(`Review No. ${i+1}`, rd.reviewNo);
+    labelRow(`Review Date ${i+1}`, rd.reviewDate);
+    labelRow(`Received Date ${i+1}`, rd.receivedDate);
+  });
+
+  ws.addRow([]);
+
+  const headRow = ws.addRow(['Count','Section No','No. V','Comment','Corrected']);
+  headRow.eachCell({includeEmpty:true}, c => {
+    c.fill = headFill; c.font = { bold:true }; c.alignment = { horizontal:'center', vertical:'middle' }; c.border = border;
+  });
+
+  const maxRows = Math.max(r.items.length, 10);
+  for(let i=0;i<maxRows;i++){
+    const it = r.items[i] || {};
+    const row = ws.addRow([it.count || (i+1), it.sectionNo||'', it.vNo||'', null, it.corrected ? true : null]);
+    row.getCell(1).alignment = { horizontal:'center', vertical:'middle' };
+    row.getCell(2).alignment = { horizontal:'center', vertical:'middle' }; row.getCell(2).font = blueFont;
+    row.getCell(3).alignment = { horizontal:'center', vertical:'middle' }; row.getCell(3).font = blueFont;
+    const runs = commentHtmlToRuns(it.commentHtml || it.comment || '');
+    row.getCell(4).value = { richText: runs.map(rn => ({
+      text: rn.text,
+      font: { bold: !!rn.bold, color: { argb: 'FF' + (rn.color || '1D4ED8') }, size: 11 }
+    })) };
+    row.getCell(4).alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    row.getCell(5).alignment = { horizontal:'center', vertical:'middle' };
+    row.eachCell({includeEmpty:true}, c => c.border = border);
+    const plainText = runs.map(rn => rn.text).join('');
+    const lineCount = Math.max(1, plainText.split('\n').length, Math.ceil(plainText.length / 60));
+    row.height = Math.max(30, lineCount * 16 + 8);
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type:'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = pdfFilename(r, 'xlsx');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function pdfFilename(r, ext){
+  return `IPC-Review-${r.project}-${r.ipcNo||''}`.replace(/[^a-zA-Z0-9-]/g,'_') + '.' + ext;
+}
+
+// ---- Shared print/PDF markup ----
+function renderPrintHost(r){
+  const detailRows = [];
+  detailRows.push(`<tr><td colspan="2" class="bar">IPC Details</td></tr>`);
+  detailRows.push(`<tr><td class="lbl">Project</td><td class="val">${escapeHtml(r.project)}</td></tr>`);
+  detailRows.push(`<tr><td class="lbl">Company</td><td class="val">${escapeHtml(r.company)}</td></tr>`);
+  detailRows.push(`<tr><td class="lbl">IPC</td><td class="val">${escapeHtml(r.ipcNo)}</td></tr>`);
+  detailRows.push(`<tr><td class="lbl">Period From</td><td class="val">${escapeHtml(r.periodFrom)}</td></tr>`);
+  detailRows.push(`<tr><td class="lbl">Period To</td><td class="val">${escapeHtml(r.periodTo)}</td></tr>`);
+  detailRows.push(`<tr><td colspan="2" class="bar">Review Details</td></tr>`);
+  detailRows.push(`<tr><td class="lbl">Reviewer's Name</td><td class="val">${escapeHtml(r.reviewerName)}</td></tr>`);
+  (r.rounds && r.rounds.length ? r.rounds : []).forEach((rd, i) => {
+    detailRows.push(`<tr><td class="lbl">Review No. ${i+1}</td><td class="val">${escapeHtml(rd.reviewNo)}</td></tr>`);
+    detailRows.push(`<tr><td class="lbl">Review Date ${i+1}</td><td class="val">${escapeHtml(rd.reviewDate)}</td></tr>`);
+    detailRows.push(`<tr><td class="lbl">Received Date ${i+1}</td><td class="val">${escapeHtml(rd.receivedDate)}</td></tr>`);
+  });
+
+  const itemRows = [];
+  const maxRows = Math.max(r.items.length, 10);
+  for(let i=0;i<maxRows;i++){
+    const it = r.items[i] || {};
+    itemRows.push(`
+      <tr>
+        <td>${it.count || (i+1)}</td>
+        <td class="val">${escapeHtml(it.sectionNo||'')}</td>
+        <td class="val">${escapeHtml(it.vNo||'')}</td>
+        <td class="commentcell val">${it.commentHtml || ''}</td>
+        <td><span class="chk">${it.corrected ? '&#10003;' : ''}</span></td>
+      </tr>
+    `);
+  }
+  document.getElementById('printHostInner').innerHTML = `
+    <table class="pt">${detailRows.join('')}</table>
+    <table class="pt" style="margin-top:8px;">
+      <colgroup>
+        <col style="width:8%"><col style="width:22%"><col style="width:8%"><col style="width:52%"><col style="width:10%">
+      </colgroup>
+      <tr>
+        <th class="colhead">Count</th>
+        <th class="colhead">Section No</th>
+        <th class="colhead">No. V</th>
+        <th class="colhead">Comment</th>
+        <th class="colhead">Corrected</th>
+      </tr>
+      ${itemRows.join('')}
+    </table>
+  `;
+}
+
+// Build the PDF as a single custom-sized page that exactly matches the
+// rendered content — no A4 pagination, so nothing gets cut off mid-table.
+// The page size is derived from html2pdf's own captured canvas (not a
+// separate DOM measurement), so the page and the image are always a
+// perfect match — no leftover sliver getting clipped on any edge.
+async function buildPdfBlob(r){
+  renderPrintHost(r);
+  const host = document.getElementById('printHost');
+  host.classList.add('visible');
+  const prevX = window.scrollX, prevY = window.scrollY;
+  window.scrollTo(0, 0);
+  await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+  const el = document.getElementById('printHostInner');
+  const marginMM = 6;
+  let blob;
+  try{
+    const worker = html2pdf().set({
+      margin: marginMM,
+      image: { type:'jpeg', quality:0.98 },
+      html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff', scrollX:0, scrollY:0 },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
+    }).from(el);
+
+    await worker.toCanvas();
+    const canvas = await worker.get('canvas');
+    const contentWidthMM = 190;
+    const contentHeightMM = contentWidthMM * (canvas.height / canvas.width);
+    await worker.set({
+      jsPDF: {
+        unit:'mm',
+        format: [contentWidthMM + marginMM*2, contentHeightMM + marginMM*2],
+        orientation:'portrait'
+      }
+    });
+    blob = await worker.outputPdf('blob');
+  }catch(e){
+    // Fallback: plain A4 with automatic pagination, in case the custom
+    // page-size path fails for some reason — better a paginated PDF than none.
+    blob = await html2pdf().set({
+      margin: 8,
+      image: { type:'jpeg', quality:0.98 },
+      html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff', scrollX:0, scrollY:0 },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
+      pagebreak: { mode:['css','legacy'] }
+    }).from(el).outputPdf('blob');
+  }finally{
+    host.classList.remove('visible');
+    window.scrollTo(prevX, prevY);
+  }
+  return blob;
+}
+
+async function exportPdf(){
+  const r = collectForm();
+  setStatus('جارٍ إنشاء PDF...');
+  try{
+    const blob = await buildPdfBlob(r);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = pdfFilename(r, 'pdf');
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus('تم إنشاء PDF ✓');
+  }catch(e){
+    setStatus('تعذّر إنشاء PDF');
+  }
+}
+
+async function printReview(){
+  const r = collectForm();
+  setStatus('جارٍ التجهيز للطباعة...');
+  try{
+    const blob = await buildPdfBlob(r);
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if(!win){
+      const a = document.createElement('a');
+      a.href = url; a.download = pdfFilename(r, 'pdf');
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setStatus('تم تنزيل ملف PDF — افتحه واطبعه من هناك (Ctrl+P)');
+    }else{
+      setStatus('استخدم زر الطباعة داخل نافذة PDF الجديدة');
+    }
+  }catch(e){
+    setStatus('تعذّرت الطباعة — جرّب تصدير PDF');
+  }
+}
+
+loadAll().then(() => { if(Object.keys(reviews).length===0) newReview(); });
+</script>
+</body>
+</html>
