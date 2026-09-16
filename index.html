@@ -93,6 +93,9 @@
   .footer-actions{display:flex; justify-content:space-between; margin-top:14px; flex-wrap:wrap; gap:8px;}
 
   .status{font-size:12px; color:var(--green); margin-inline-start:8px;}
+  .storage-badge{font-size:12px; line-height:1.6; border-radius:6px; padding:8px 10px; margin:-12px 0 20px;}
+  .storage-badge.ok{background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0;}
+  .storage-badge.warn{background:#fffbeb; color:#92400e; border:1px solid #fcd34d;}
   .note{font-size:11px; color:var(--muted); margin-top:6px;}
 
   /* ==== Print/PDF overlay: rendered fully visible (briefly) so html2canvas can capture it ==== */
@@ -119,6 +122,7 @@
 <div class="app">
   <h1>نظام مراجعة المستخلصات (IPC Review)</h1>
   <div class="sub">تسجيل ملاحظات مراجعة مستخلصات الاستشاري — حفظ تلقائي، تصدير Excel وPDF، وطباعة بنفس تنسيق النموذج الرسمي.</div>
+  <div id="storageBadge" class="storage-badge ok">جارِ التحقق من التخزين...</div>
 
   <div class="layout">
     <!-- Sidebar -->
@@ -128,6 +132,11 @@
         <input class="sidebar-search" id="search" placeholder="بحث بالمشروع أو الشركة...">
         <div id="reviewList"></div>
         <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px;" onclick="newReview()">+ مراجعة جديدة</button>
+        <div style="display:flex; gap:6px; margin-top:6px;">
+          <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="exportBackup()">نسخة احتياطية</button>
+          <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="document.getElementById('restoreFile').click()">استعادة</button>
+        </div>
+        <input type="file" id="restoreFile" accept="application/json,.json" style="display:none" onchange="restoreBackup(this)">
       </div>
 
       <div class="card">
@@ -278,6 +287,8 @@ let projectCompanyMap = {}; // project -> { company, type }
 let contractorSections = [];
 let consultantSections = [];
 let reviews = {}; // id -> review object
+let recoveredCount = 0; // reviews rescued from an index that had lost them
+let loadPromise = null;  // resolves once loadAll() has finished reading storage
 const savedRanges = new WeakMap();
 let activeComment = null;
 
@@ -309,52 +320,138 @@ if(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && typeof firebase !== 'undefined')
 
 const hasClaudeStorage = (typeof window.storage !== 'undefined') && window.storage && typeof window.storage.get === 'function';
 const KV_COLLECTION = 'ipc_review_kv';
+const LS_PREFIX = 'ipc_';
+
+// Cloud health. It starts optimistic and flips the first time Firestore refuses
+// a read or a write (expired security rules, offline, blocked network...).
+// Once it is down the app keeps working on this device, says so in the header,
+// and — the important part — never lets a device-only write shrink the saved
+// index. A sync outage must not look like "all my reviews were deleted".
+let cloudBroken = false;
+function cloudUp(){ return !!db && !cloudBroken; }
+function markCloudBroken(err){
+  if(cloudBroken) return;
+  cloudBroken = true;
+  try{ console.warn('IPC Review: cloud sync unavailable — saving on this device only.', err); }catch(e){}
+  try{ updateStorageBadge(); }catch(e){}
+}
+
+function lsGet(key){ try{ return localStorage.getItem(LS_PREFIX + key); }catch(e){ return null; } }
+function lsSet(key, value){ try{ localStorage.setItem(LS_PREFIX + key, value); return true; }catch(e){ return false; } }
+function lsDel(key){ try{ localStorage.removeItem(LS_PREFIX + key); return true; }catch(e){ return false; } }
 
 const storage = {
+  // Reads prefer the cloud, but a cloud value is also mirrored locally so the
+  // device always keeps a full copy to fall back on.
   async get(key, shared){
-    if(db){
+    if(db && !cloudBroken){
       try{
         const doc = await db.collection(KV_COLLECTION).doc(key).get();
-        if(doc.exists) return { key, value: doc.data().value, shared };
-      }catch(e){ /* fall through */ }
+        if(doc.exists){
+          const v = doc.data().value;
+          lsSet(key, v);
+          return { key, value: v, shared };
+        }
+      }catch(e){ markCloudBroken(e); }
     }
     if(hasClaudeStorage){
-      try{ return await window.storage.get(key, shared); }catch(e){ /* fall through */ }
+      try{
+        const r = await window.storage.get(key, shared);
+        if(r && r.value != null) return r;
+      }catch(e){ /* fall through */ }
     }
-    try{
-      const v = localStorage.getItem('ipc_' + key);
-      return v === null ? null : { key, value: v, shared };
-    }catch(e){ return null; }
+    const v = lsGet(key);
+    return v === null ? null : { key, value: v, shared };
   },
+  // Writes go to the local mirror first and then to the cloud, so a failure on
+  // either tier still leaves the value somewhere. The result reports which
+  // tiers accepted it instead of silently returning null.
   async set(key, value, shared){
-    if(db){
+    const local = lsSet(key, value);
+    let cloud = false;
+    if(db && !cloudBroken){
       try{
         await db.collection(KV_COLLECTION).doc(key).set({ value });
-        return { key, value, shared };
-      }catch(e){ /* fall through */ }
+        cloud = true;
+      }catch(e){ markCloudBroken(e); }
     }
     if(hasClaudeStorage){
-      try{ return await window.storage.set(key, value, shared); }catch(e){ /* fall through */ }
+      try{ await window.storage.set(key, value, shared); }catch(e){ /* ignore */ }
     }
-    try{
-      localStorage.setItem('ipc_' + key, value);
-      return { key, value, shared };
-    }catch(e){ return null; }
+    return { key, value, shared, local, cloud, ok: local || cloud };
   },
   async delete(key, shared){
-    if(db){
-      try{
-        await db.collection(KV_COLLECTION).doc(key).delete();
-        return { key, deleted:true, shared };
-      }catch(e){ /* fall through */ }
+    lsDel(key);
+    if(db && !cloudBroken){
+      try{ await db.collection(KV_COLLECTION).doc(key).delete(); }catch(e){ markCloudBroken(e); }
     }
     if(hasClaudeStorage){
-      try{ return await window.storage.delete(key, shared); }catch(e){ /* fall through */ }
+      try{ await window.storage.delete(key, shared); }catch(e){ /* ignore */ }
     }
-    try{ localStorage.removeItem('ipc_' + key); return { key, deleted:true, shared }; }catch(e){ return null; }
+    return { key, deleted:true, shared };
+  },
+  // Every review body still present in this device's storage, whether or not
+  // the saved index still mentions it. This is what makes orphaned reviews
+  // recoverable.
+  localReviewIds(){
+    const ids = [];
+    const prefix = LS_PREFIX + 'review:';
+    try{
+      for(let i=0; i<localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(k && k.indexOf(prefix) === 0) ids.push(k.slice(prefix.length));
+      }
+    }catch(e){}
+    return ids;
   }
 };
 
+const REVIEW_INDEX_KEY = 'meta:review-ids';
+
+async function readReviewIndex(){
+  try{
+    const idx = await storage.get(REVIEW_INDEX_KEY);
+    if(idx && idx.value){
+      const parsed = JSON.parse(idx.value);
+      if(Array.isArray(parsed)) return parsed.filter(x => typeof x === 'string' && x);
+    }
+  }catch(e){}
+  return [];
+}
+
+// Every id this device knows about, from any source.
+function knownReviewIds(extra){
+  return Array.from(new Set([].concat(extra || [], storage.localReviewIds(), Object.keys(reviews))));
+}
+
+// The index only ever grows here — it is rebuilt as a union, never overwritten
+// with whatever happens to be in memory. deleteReview() is the single place an
+// id is removed, and only after the user confirms.
+async function addToReviewIndex(id){
+  const stored = await readReviewIndex();
+  const merged = knownReviewIds(stored.concat(id ? [id] : []));
+  await storage.set(REVIEW_INDEX_KEY, JSON.stringify(merged), false);
+  return merged;
+}
+
+async function removeFromReviewIndex(id){
+  const stored = await readReviewIndex();
+  const merged = knownReviewIds(stored).filter(x => x !== id);
+  await storage.set(REVIEW_INDEX_KEY, JSON.stringify(merged), false);
+  return merged;
+}
+
+function updateStorageBadge(){
+  const el = document.getElementById('storageBadge');
+  if(!el) return;
+  if(cloudUp()){
+    el.className = 'storage-badge ok';
+    el.textContent = 'المزامنة السحابية مفعّلة — المراجعات محفوظة على السحابة وعلى هذا الجهاز.';
+  }else{
+    el.className = 'storage-badge warn';
+    el.textContent = 'تنبيه: المزامنة السحابية غير متاحة حالياً — الحفظ يتم على هذا المتصفح فقط. لا تمسح بيانات المتصفح، واستخدم "نسخة احتياطية" للاحتفاظ بنسخة من مراجعاتك.';
+  }
+}
 
 const DEFAULT_PROJECT_COMPANY = [
   ["Advanced Co","Advanced Co","Contractor"],
@@ -484,14 +581,27 @@ async function loadAll(){
   if(fixedContractor.changed){ contractorSections = fixedContractor.list; await persistSections('contractor'); }
   if(fixedConsultant.changed){ consultantSections = fixedConsultant.list; await persistSections('consultant'); }
   try{
-    const idx = await storage.get('meta:review-ids');
-    const ids = idx && idx.value ? JSON.parse(idx.value) : [];
+    // Load from the union of the saved index and any review bodies still on
+    // this device. A review whose body survived but that an older build had
+    // dropped from the index is picked up here instead of staying invisible.
+    const stored = await readReviewIndex();
+    const ids = Array.from(new Set(stored.concat(storage.localReviewIds())));
+    let recovered = 0;
     for(const id of ids){
       try{
         const r = await storage.get('review:' + id);
-        if(r && r.value) reviews[id] = JSON.parse(r.value);
+        if(r && r.value){
+          reviews[id] = JSON.parse(r.value);
+          if(stored.indexOf(id) === -1) recovered++;
+        }
       }catch(e){}
     }
+    // Write the repaired index back so the recovery is permanent.
+    const merged = knownReviewIds(stored);
+    if(merged.length !== stored.length){
+      await storage.set(REVIEW_INDEX_KEY, JSON.stringify(merged), false);
+    }
+    recoveredCount = recovered;
   }catch(e){}
  }catch(e){
   // Absolute safety net: even if something above throws unexpectedly,
@@ -777,14 +887,17 @@ function collectForm(){
 }
 
 async function saveReview(){
+  // Never save on top of a half-loaded state: until loadAll() has finished,
+  // `reviews` is incomplete, and the index must not be rebuilt from it.
+  if(loadPromise){ try{ await loadPromise; }catch(e){} }
   const r = collectForm();
   currentId = r.id;
   reviews[r.id] = r;
   try{
-    await storage.set('review:' + r.id, JSON.stringify(r), false);
-    const ids = Object.keys(reviews);
-    await storage.set('meta:review-ids', JSON.stringify(ids), false);
-    setStatus('تم الحفظ ✓');
+    const res = await storage.set('review:' + r.id, JSON.stringify(r), false);
+    if(res && res.ok === false){ setStatus('فشل الحفظ'); return; }
+    await addToReviewIndex(r.id);
+    setStatus(cloudUp() ? 'تم الحفظ ✓' : 'تم الحفظ على هذا الجهاز ✓');
     renderReviewList();
   }catch(e){
     setStatus('فشل الحفظ');
@@ -795,14 +908,73 @@ async function deleteReview(){
   if(!currentId){ newReview(); return; }
   const ok = await showConfirm('حذف هذه المراجعة نهائياً؟ لا يمكن التراجع عن هذا الإجراء.');
   if(!ok) return;
+  const removedId = currentId;
   try{
-    await storage.delete('review:' + currentId, false);
+    await storage.delete('review:' + removedId, false);
   }catch(e){}
-  delete reviews[currentId];
-  const ids = Object.keys(reviews);
-  await storage.set('meta:review-ids', JSON.stringify(ids), false);
+  delete reviews[removedId];
+  await removeFromReviewIndex(removedId);
   newReview();
   renderReviewList();
+}
+
+// ---- Backup / restore -------------------------------------------------
+// A portable copy of every review plus the project and section lists. This is
+// the only copy that survives a cleared browser or a lost device, so it is
+// worth taking regularly.
+function exportBackup(){
+  const payload = {
+    kind: 'ipc-review-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    reviews: Object.values(reviews),
+    projectCompanyMap,
+    contractorSections,
+    consultantSections
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ipc-review-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  setStatus('تم تنزيل النسخة الاحتياطية ✓');
+}
+
+// Restore merges: an incoming review is written only when it is new or newer
+// than the copy already stored, so restoring an old backup never wipes recent
+// work.
+async function restoreBackup(input){
+  const file = input && input.files && input.files[0];
+  input.value = '';
+  if(!file) return;
+  let data;
+  try{
+    data = JSON.parse(await file.text());
+  }catch(e){ setStatus('ملف غير صالح'); return; }
+  const list = Array.isArray(data) ? data : (data && Array.isArray(data.reviews) ? data.reviews : null);
+  if(!list){ setStatus('ملف غير صالح'); return; }
+  if(loadPromise){ try{ await loadPromise; }catch(e){} }
+  let added = 0;
+  for(const r of list){
+    if(!r || !r.id) continue;
+    const existing = reviews[r.id];
+    if(existing && (existing.updatedAt || '') >= (r.updatedAt || '')) continue;
+    reviews[r.id] = r;
+    await storage.set('review:' + r.id, JSON.stringify(r), false);
+    added++;
+  }
+  if(added > 0) await addToReviewIndex(null);
+  if(data && data.projectCompanyMap){
+    projectCompanyMap = Object.assign({}, data.projectCompanyMap, projectCompanyMap);
+    await storage.set('meta:project-company-map', JSON.stringify(projectCompanyMap), false);
+    renderProjectSelect();
+    renderCompanySelect();
+  }
+  renderReviewList();
+  setStatus(added > 0 ? ('تمت استعادة ' + added + ' مراجعة ✓') : 'لا توجد مراجعات جديدة في الملف');
 }
 
 function showConfirm(message){
@@ -1133,7 +1305,11 @@ async function printReview(){
   }
 }
 
-loadAll().then(() => { if(Object.keys(reviews).length===0) newReview(); });
+loadPromise = loadAll().then(() => {
+  updateStorageBadge();
+  if(Object.keys(reviews).length===0) newReview();
+  if(recoveredCount > 0) setStatus('تم استرجاع ' + recoveredCount + ' مراجعة ✓');
+});
 </script>
 </body>
 </html>
