@@ -390,6 +390,27 @@ const storage = {
     }
     return { key, deleted:true, shared };
   },
+  // Every review body in the cloud collection, keyed by id, or null when the
+  // cloud is unreachable. One query for the whole collection beats a document
+  // read per id: it is a single round trip instead of N sequential ones, and
+  // it finds bodies the saved index has lost, which a per-id read cannot.
+  async cloudReviewBodies(){
+    if(!db || cloudBroken) return null;
+    const prefix = 'review:';
+    try{
+      const snap = await db.collection(KV_COLLECTION).get();
+      const out = {};
+      snap.forEach(doc => {
+        if(doc.id.indexOf(prefix) !== 0) return;
+        const data = doc.data();
+        const v = data ? data.value : null;
+        if(typeof v !== 'string') return;
+        out[doc.id.slice(prefix.length)] = v;
+        lsSet(doc.id, v);
+      });
+      return out;
+    }catch(e){ markCloudBroken(e); return null; }
+  },
   // Every review body still present in this device's storage, whether or not
   // the saved index still mentions it. This is what makes orphaned reviews
   // recoverable.
@@ -585,17 +606,23 @@ async function loadAll(){
     // this device. A review whose body survived but that an older build had
     // dropped from the index is picked up here instead of staying invisible.
     const stored = await readReviewIndex();
+    // Sweep the whole cloud collection first, so a review the index lost is
+    // still found, then fall back to per-id reads for anything left over.
+    const cloudBodies = await storage.cloudReviewBodies();
+    if(cloudBodies){
+      for(const id in cloudBodies){
+        try{ reviews[id] = JSON.parse(cloudBodies[id]); }catch(e){}
+      }
+    }
     const ids = Array.from(new Set(stored.concat(storage.localReviewIds())));
-    let recovered = 0;
     for(const id of ids){
+      if(reviews[id]) continue;
       try{
         const r = await storage.get('review:' + id);
-        if(r && r.value){
-          reviews[id] = JSON.parse(r.value);
-          if(stored.indexOf(id) === -1) recovered++;
-        }
+        if(r && r.value) reviews[id] = JSON.parse(r.value);
       }catch(e){}
     }
+    const recovered = Object.keys(reviews).filter(id => stored.indexOf(id) === -1).length;
     // Write the repaired index back so the recovery is permanent.
     const merged = knownReviewIds(stored);
     if(merged.length !== stored.length){
