@@ -111,6 +111,57 @@
   .pt .chk{display:inline-flex; align-items:center; justify-content:center; width:13px; height:13px; border:1px solid #000; font-size:11px; line-height:1;}
   .pt .commentcell div{margin:0;}
 
+  /* ---- Top navigation between the two pages ---- */
+  .nav-tabs{display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;}
+  .nav-tab{
+    border:1px solid var(--border); background:#fff; color:var(--muted);
+    border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600;
+    cursor:pointer; font-family:inherit;
+  }
+  .nav-tab:hover{background:var(--accent-light);}
+  .nav-tab.active{background:var(--accent); border-color:var(--accent); color:#fff;}
+
+  .page{display:none;}
+  .page.active{display:block;}
+
+  /* ---- Projects page: classification -> project -> its IPCs ---- */
+  .proj-toolbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px;}
+  .proj-toolbar input[type=text]{max-width:280px;}
+  .proj-toolbar label.inline{display:flex; align-items:center; gap:6px; margin:0; font-size:12px; cursor:pointer;}
+  .proj-toolbar input[type=checkbox]{width:15px; height:15px;}
+
+  .class-block{margin-bottom:22px;}
+  .class-head{
+    display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700;
+    color:var(--accent); padding:0 2px 8px; border-bottom:2px solid var(--accent-light); margin-bottom:12px;
+  }
+  .class-head .pill{font-weight:600;}
+
+  .proj-card{background:var(--panel); border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden;}
+  .proj-head{display:flex; align-items:center; gap:10px; padding:12px 14px; cursor:pointer;}
+  .proj-head:hover{background:#f8fafc;}
+  .proj-caret{color:var(--muted); font-size:11px; width:12px; flex-shrink:0;}
+  .proj-title{font-size:14px; font-weight:600; flex:1; min-width:0;}
+  .proj-title .co{font-size:12px; font-weight:400; color:var(--muted);}
+  .proj-meta{display:flex; gap:6px; align-items:center; flex-wrap:wrap;}
+  .pill{font-size:11px; border-radius:999px; padding:2px 9px; background:#f1f5f9; color:var(--muted); white-space:nowrap;}
+  .pill.n{background:var(--accent-light); color:var(--accent); font-weight:600;}
+  .pill.open{background:#fffbeb; color:#92400e;}
+  .pill.corrected{background:#eff6ff; color:#1d4ed8;}
+  .pill.closed{background:#ecfdf5; color:#065f46;}
+
+  .proj-body{border-top:1px solid var(--border); padding:0;}
+  .proj-card.collapsed .proj-body{display:none;}
+
+  table.ipc-table{width:100%; border-collapse:collapse;}
+  table.ipc-table th, table.ipc-table td{padding:7px 10px; font-size:12px; border-bottom:1px solid var(--border); text-align:start;}
+  table.ipc-table th{background:#f8fafc; color:var(--muted); font-weight:600; font-size:11px;}
+  table.ipc-table tr:last-child td{border-bottom:none;}
+  table.ipc-table tbody tr{cursor:pointer;}
+  table.ipc-table tbody tr:hover{background:var(--accent-light);}
+  .ipc-no{font-weight:600;}
+  .empty-note{font-size:12px; color:#94a3b8; padding:12px 14px;}
+
   .confirm-overlay{position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:4000; display:none; align-items:center; justify-content:center;}
   .confirm-overlay.open{display:flex;}
   .confirm-box{background:#fff; border-radius:10px; padding:20px; width:300px; max-width:90%; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25);}
@@ -124,6 +175,12 @@
   <div class="sub">تسجيل ملاحظات مراجعة مستخلصات الاستشاري — حفظ تلقائي، تصدير Excel وPDF، وطباعة بنفس تنسيق النموذج الرسمي.</div>
   <div id="storageBadge" class="storage-badge ok">جارِ التحقق من التخزين...</div>
 
+  <div class="nav-tabs">
+    <button class="nav-tab active" id="tabReview" onclick="showPage('review')">مراجعة مستخلص</button>
+    <button class="nav-tab" id="tabProjects" onclick="showPage('projects')">المشاريع والمستخلصات</button>
+  </div>
+
+  <div id="pageReview" class="page active">
   <div class="layout">
     <!-- Sidebar -->
     <div class="sidebar">
@@ -266,6 +323,17 @@
         </div>
       </div>
     </div>
+  </div>
+  </div>
+
+  <div id="pageProjects" class="page">
+    <div class="proj-toolbar">
+      <input type="text" id="projSearch" placeholder="بحث بالمشروع أو الشركة أو رقم المستخلص...">
+      <label class="inline"><input type="checkbox" id="projShowEmpty"> إظهار المشاريع بدون مستخلصات</label>
+      <button class="btn btn-secondary btn-sm" onclick="exportAllProjectsExcel()">تصدير كل المشاريع (Excel)</button>
+      <span class="status" id="projStatusMsg"></span>
+    </div>
+    <div id="projectsBody"></div>
   </div>
 </div>
 
@@ -1039,6 +1107,7 @@ function renderReviewList(){
   );
   if(filtered.length === 0){
     list.innerHTML = '<div style="font-size:12px; color:#94a3b8;">لا توجد مراجعات محفوظة</div>';
+    renderProjectsPage();
     return;
   }
   list.innerHTML = filtered.map(r => {
@@ -1050,6 +1119,7 @@ function renderReviewList(){
       <div class="rc">${escapeHtml(r.company)} · ${rounds.length} مراجعة (آخرها رقم ${escapeHtml(last.reviewNo||'-')} · ${escapeHtml(last.reviewDate||'')})</div>
     </div>
   `;}).join('');
+  renderProjectsPage();
 }
 
 function loadReview(id){
@@ -1108,10 +1178,11 @@ function commentHtmlToRuns(html){
 }
 
 // ---- Excel export (ExcelJS supports real fills/borders/fonts) ----
-async function exportExcel(){
-  const r = collectForm();
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('IPC Review', { views:[{ rightToLeft:false }] });
+// One review -> one worksheet. Kept separate from the download step so the
+// same layout serves both the single-review export and the per-project
+// workbook, where every IPC of a project becomes a sheet of its own.
+function buildReviewSheet(wb, r, sheetName){
+  const ws = wb.addWorksheet(sheetName || 'IPC Review', { views:[{ rightToLeft:false }] });
   ws.columns = [ {width:10}, {width:26}, {width:10}, {width:75}, {width:12} ];
 
   const thin = { style:'thin', color:{argb:'FF000000'} };
@@ -1181,14 +1252,299 @@ async function exportExcel(){
     row.height = Math.max(30, lineCount * 16 + 8);
   }
 
+  return ws;
+}
+
+async function downloadWorkbook(wb, filename){
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type:'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = pdfFilename(r, 'xlsx');
+  a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+async function exportExcel(){
+  const r = collectForm();
+  const wb = new ExcelJS.Workbook();
+  buildReviewSheet(wb, r, 'IPC Review');
+  await downloadWorkbook(wb, pdfFilename(r, 'xlsx'));
+}
+
+// ======================================================================
+// Projects page: every project as its own group, with the IPCs filed
+// under it, plus a one-click workbook per project (a sheet per IPC).
+// ======================================================================
+
+const TYPE_GROUPS = [
+  { key:'Contractor', label:'مقاولون (Contractors)' },
+  { key:'Consultant', label:'استشاريون (Consultants)' },
+  { key:'',           label:'غير مصنّف' }
+];
+const STATUS_LABELS = { Open:'قيد المراجعة', Corrected:'تم التصحيح', Closed:'مغلقة' };
+
+// Arabic takes the plural form for 3–10 and the singular elsewhere.
+function arCount(n, singular, plural){
+  return n + ' ' + ((n >= 3 && n <= 10) ? plural : singular);
+}
+const STATUS_PILL = { Open:'open', Corrected:'corrected', Closed:'closed' };
+
+// Projects the user collapsed on the projects page. Everything starts open.
+const collapsedProjects = new Set();
+// Rendered project groups, in render order — the page's click handlers refer
+// to a project by its index here so a name with quotes in it stays harmless.
+let projectsPageIndex = [];
+
+function showPage(page){
+  const isProjects = page === 'projects';
+  document.getElementById('pageReview').classList.toggle('active', !isProjects);
+  document.getElementById('pageProjects').classList.toggle('active', isProjects);
+  document.getElementById('tabReview').classList.toggle('active', !isProjects);
+  document.getElementById('tabProjects').classList.toggle('active', isProjects);
+  if(isProjects) renderProjectsPage();
+}
+
+function setProjStatus(msg){
+  const el = document.getElementById('projStatusMsg');
+  if(!el) return;
+  el.textContent = msg;
+  if(msg) setTimeout(()=>{ if(el.textContent===msg) el.textContent=''; }, 3000);
+}
+
+// IPC numbers are ordered the way a human reads them: 1, 2, 10 — not 1, 10, 2.
+// Anything non-numeric falls back to a plain text compare, and ties break on
+// the most recently updated review.
+function compareIpc(a, b){
+  const na = parseFloat(String(a.ipcNo||'').replace(/[^\d.]/g,''));
+  const nb = parseFloat(String(b.ipcNo||'').replace(/[^\d.]/g,''));
+  const va = isNaN(na) ? null : na, vb = isNaN(nb) ? null : nb;
+  if(va !== null && vb !== null && va !== vb) return va - vb;
+  if(va !== null && vb === null) return -1;
+  if(va === null && vb !== null) return 1;
+  const t = String(a.ipcNo||'').localeCompare(String(b.ipcNo||''));
+  if(t !== 0) return t;
+  return (a.updatedAt||'').localeCompare(b.updatedAt||'');
+}
+
+// Every project that has reviews, plus (optionally) the ones in the project
+// list that have none yet, each with its own IPCs attached.
+function buildProjectGroups(query, includeEmpty){
+  const q = (query||'').trim().toLowerCase();
+  const groups = {};
+  function ensure(name){
+    if(!groups[name]){
+      const info = projectCompanyMap[name] || {};
+      groups[name] = { project:name, company:info.company || '', type:info.type || '', reviews:[] };
+    }
+    return groups[name];
+  }
+  if(includeEmpty) Object.keys(projectCompanyMap).forEach(ensure);
+  Object.values(reviews).forEach(r => {
+    const g = ensure(r.project || 'بدون مشروع');
+    if(!g.company) g.company = r.company || '';
+    g.reviews.push(r);
+  });
+
+  let list = Object.values(groups);
+  if(q){
+    list = list.map(g => {
+      const projectHit = g.project.toLowerCase().includes(q) || (g.company||'').toLowerCase().includes(q);
+      // A project matched by name keeps all of its IPCs; otherwise only the
+      // IPCs that match the query themselves keep the project on screen.
+      const matched = projectHit ? g.reviews : g.reviews.filter(r =>
+        String(r.ipcNo||'').toLowerCase().includes(q) ||
+        (r.company||'').toLowerCase().includes(q)
+      );
+      return Object.assign({}, g, { reviews: matched, forced: projectHit });
+    }).filter(g => g.reviews.length > 0 || (g.forced && includeEmpty));
+  }
+  list.forEach(g => g.reviews.sort(compareIpc));
+  list.sort((a,b) => a.project.localeCompare(b.project));
+  return list;
+}
+
+function statusCounts(list){
+  const c = { Open:0, Corrected:0, Closed:0 };
+  list.forEach(r => { const k = r.statusVal || 'Open'; if(k in c) c[k]++; });
+  return c;
+}
+
+function lastRoundOf(r){
+  const rounds = (r.rounds && r.rounds.length) ? r.rounds : [{reviewNo:r.reviewNo, reviewDate:r.reviewDate}];
+  return rounds[rounds.length-1] || {};
+}
+
+function renderProjectsPage(){
+  const body = document.getElementById('projectsBody');
+  if(!body) return;
+  const query = (document.getElementById('projSearch').value || '');
+  const includeEmpty = document.getElementById('projShowEmpty').checked;
+  const groups = buildProjectGroups(query, includeEmpty);
+  projectsPageIndex = groups;
+
+  if(groups.length === 0){
+    body.innerHTML = '<div class="empty-note">لا توجد مشاريع مطابقة.</div>';
+    return;
+  }
+
+  const html = TYPE_GROUPS.map(tg => {
+    const inType = groups.map((g,i) => ({g, i})).filter(({g}) => (g.type || '') === tg.key);
+    if(inType.length === 0) return '';
+    const ipcTotal = inType.reduce((n,{g}) => n + g.reviews.length, 0);
+    const cards = inType.map(({g,i}) => {
+      const counts = statusCounts(g.reviews);
+      const collapsed = collapsedProjects.has(g.project) ? ' collapsed' : '';
+      const rows = g.reviews.length === 0
+        ? '<div class="empty-note">لا توجد مستخلصات مسجّلة لهذا المشروع بعد.</div>'
+        : `<table class="ipc-table">
+            <thead>
+              <tr>
+                <th style="width:16%">المستخلص</th>
+                <th style="width:24%">الفترة</th>
+                <th style="width:14%">الجولات</th>
+                <th style="width:20%">آخر مراجعة</th>
+                <th style="width:10%">الملاحظات</th>
+                <th style="width:16%">الحالة</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${g.reviews.map(r => {
+                const last = lastRoundOf(r);
+                const rounds = (r.rounds && r.rounds.length) ? r.rounds.length : 1;
+                const items = (r.items || []).filter(it => (it.commentText || it.commentHtml || '').trim() !== '').length;
+                const st = r.statusVal || 'Open';
+                const period = [r.periodFrom, r.periodTo].filter(Boolean).join(' — ');
+                return `<tr data-open="${escapeHtml(r.id)}" title="فتح هذه المراجعة">
+                  <td class="ipc-no">IPC ${escapeHtml(r.ipcNo || '-')}</td>
+                  <td>${escapeHtml(period || '-')}</td>
+                  <td>${rounds}</td>
+                  <td>${escapeHtml(last.reviewDate || '-')}</td>
+                  <td>${items}</td>
+                  <td><span class="pill ${STATUS_PILL[st]||''}">${escapeHtml(STATUS_LABELS[st] || st)}</span></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>`;
+      return `
+        <div class="proj-card${collapsed}" data-project-idx="${i}">
+          <div class="proj-head" data-toggle="${i}">
+            <span class="proj-caret">${collapsed ? '▶' : '▼'}</span>
+            <div class="proj-title">${escapeHtml(g.project)} ${g.company ? `<span class="co">— ${escapeHtml(g.company)}</span>` : ''}</div>
+            <div class="proj-meta">
+              <span class="pill n">${arCount(g.reviews.length, 'مستخلص', 'مستخلصات')}</span>
+              ${counts.Open ? `<span class="pill open">${counts.Open} قيد المراجعة</span>` : ''}
+              ${counts.Corrected ? `<span class="pill corrected">${counts.Corrected} تم التصحيح</span>` : ''}
+              ${counts.Closed ? `<span class="pill closed">${counts.Closed} مغلقة</span>` : ''}
+              <button class="btn btn-secondary btn-sm" data-export="${i}" ${g.reviews.length ? '' : 'disabled'}>تصدير Excel</button>
+            </div>
+          </div>
+          <div class="proj-body">${rows}</div>
+        </div>`;
+    }).join('');
+    return `
+      <div class="class-block">
+        <div class="class-head">
+          <span>${tg.label}</span>
+          <span class="pill">${arCount(inType.length, 'مشروع', 'مشاريع')}</span>
+          <span class="pill">${arCount(ipcTotal, 'مستخلص', 'مستخلصات')}</span>
+        </div>
+        ${cards}
+      </div>`;
+  }).join('');
+
+  body.innerHTML = html;
+}
+
+document.getElementById('projectsBody').addEventListener('click', (e) => {
+  const exportBtn = e.target.closest('[data-export]');
+  if(exportBtn){
+    e.stopPropagation();
+    const g = projectsPageIndex[Number(exportBtn.dataset.export)];
+    if(g) exportProjectExcel(g.project);
+    return;
+  }
+  const head = e.target.closest('[data-toggle]');
+  if(head){
+    const g = projectsPageIndex[Number(head.dataset.toggle)];
+    if(g){
+      if(collapsedProjects.has(g.project)) collapsedProjects.delete(g.project);
+      else collapsedProjects.add(g.project);
+      renderProjectsPage();
+    }
+    return;
+  }
+  const row = e.target.closest('[data-open]');
+  if(row){
+    loadReview(row.dataset.open);
+    showPage('review');
+    window.scrollTo(0, 0);
+  }
+});
+document.getElementById('projSearch').addEventListener('input', renderProjectsPage);
+document.getElementById('projShowEmpty').addEventListener('change', renderProjectsPage);
+
+// ---- Per-project workbook: one file, one sheet per IPC ----------------
+// Excel is strict about sheet names: 31 characters, no : \ / ? * [ ], and no
+// duplicates — so the name is sanitised and de-duplicated before use.
+function sheetNameFor(label, used, fallbackIndex){
+  let base = String(label || '').replace(/[:\\\/\?\*\[\]]/g, '-').trim() || ('مستخلص ' + fallbackIndex);
+  base = base.slice(0, 31);
+  let name = base, n = 2;
+  while(used.has(name)){
+    const suffix = ' (' + n + ')';
+    name = base.slice(0, 31 - suffix.length) + suffix;
+    n++;
+  }
+  used.add(name);
+  return name;
+}
+
+function reviewsOfProject(project){
+  return Object.values(reviews).filter(r => (r.project || 'بدون مشروع') === project).sort(compareIpc);
+}
+
+function safeFileName(s){
+  return String(s||'').replace(/[^a-zA-Z0-9؀-ۿ-]+/g, '_').replace(/^_+|_+$/g, '') || 'project';
+}
+
+async function exportProjectExcel(project){
+  const list = reviewsOfProject(project);
+  if(list.length === 0){ setProjStatus('لا توجد مستخلصات لهذا المشروع'); return; }
+  setProjStatus('جارٍ إنشاء ملف Excel...');
+  try{
+    const wb = new ExcelJS.Workbook();
+    const used = new Set();
+    list.forEach((r, i) => buildReviewSheet(wb, r, sheetNameFor(r.ipcNo ? ('IPC ' + r.ipcNo) : '', used, i+1)));
+    await downloadWorkbook(wb, 'IPC-' + safeFileName(project) + '.xlsx');
+    setProjStatus('تم التصدير ✓ (' + arCount(list.length, 'مستخلص', 'مستخلصات') + ')');
+  }catch(e){
+    setProjStatus('تعذّر إنشاء ملف Excel');
+  }
+}
+
+// Every project in one workbook, still a sheet per IPC — the sheet name is
+// prefixed with the project so the tabs stay readable.
+async function exportAllProjectsExcel(){
+  const all = Object.values(reviews);
+  if(all.length === 0){ setProjStatus('لا توجد مستخلصات محفوظة'); return; }
+  setProjStatus('جارٍ إنشاء ملف Excel...');
+  try{
+    const wb = new ExcelJS.Workbook();
+    const used = new Set();
+    const groups = {};
+    all.forEach(r => { const k = r.project || 'بدون مشروع'; (groups[k] = groups[k] || []).push(r); });
+    Object.keys(groups).sort((a,b)=>a.localeCompare(b)).forEach(project => {
+      groups[project].sort(compareIpc).forEach((r, i) => {
+        buildReviewSheet(wb, r, sheetNameFor(project + ' - ' + (r.ipcNo || (i+1)), used, i+1));
+      });
+    });
+    await downloadWorkbook(wb, 'IPC-All-Projects.xlsx');
+    setProjStatus('تم التصدير ✓ (' + arCount(all.length, 'مستخلص', 'مستخلصات') + ')');
+  }catch(e){
+    setProjStatus('تعذّر إنشاء ملف Excel');
+  }
 }
 
 function pdfFilename(r, ext){
