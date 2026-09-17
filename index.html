@@ -95,6 +95,10 @@
   .status{font-size:12px; color:var(--green); margin-inline-start:8px;}
   .storage-badge{font-size:12px; line-height:1.6; border-radius:6px; padding:8px 10px; margin:-12px 0 20px;}
   .storage-badge.ok{background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0;}
+  /* Cloud sync working is the normal case, so it says so with a green dot
+     instead of a full-width sentence. Only the warning still needs words. */
+  .storage-badge.dot{background:none; border:none; padding:0; margin:-12px 0 16px;}
+  .storage-dot{display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--green); vertical-align:middle;}
   .storage-badge.warn{background:#fffbeb; color:#92400e; border:1px solid #fcd34d;}
   .note{font-size:11px; color:var(--muted); margin-top:6px;}
 
@@ -534,8 +538,8 @@ function updateStorageBadge(){
   const el = document.getElementById('storageBadge');
   if(!el) return;
   if(cloudUp()){
-    el.className = 'storage-badge ok';
-    el.textContent = 'المزامنة السحابية مفعّلة — المراجعات محفوظة على السحابة وعلى هذا الجهاز.';
+    el.className = 'storage-badge ok dot';
+    el.innerHTML = '<span class="storage-dot" title="المزامنة السحابية مفعّلة — المراجعات محفوظة على السحابة وعلى هذا الجهاز."></span>';
   }else{
     el.className = 'storage-badge warn';
     el.textContent = 'تنبيه: المزامنة السحابية غير متاحة حالياً — الحفظ يتم على هذا المتصفح فقط. لا تمسح بيانات المتصفح، واستخدم "نسخة احتياطية" للاحتفاظ بنسخة من مراجعاتك.';
