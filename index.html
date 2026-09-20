@@ -246,7 +246,7 @@
         <div class="grid4">
           <div class="field"><label>رقم المستخلص (IPC No.)</label><input type="text" id="ipcNo"></div>
           <div class="field"><label>من تاريخ</label><input type="text" id="periodFrom" placeholder="مثال: 16/11/2025"></div>
-          <div class="field"><label>إلى تاريخ</label><input type="text" id="periodTo" placeholder="مثال: 22/4/2026"><div class="note">يُحسب تلقائياً من تاريخ البداية — ويمكن تعديله.</div></div>
+          <div class="field"><label>إلى تاريخ</label><input type="text" id="periodTo" placeholder="مثال: 22/4/2026"></div>
           <div class="field"><label>حالة المراجعة</label>
             <select id="statusVal">
               <option value="Open">قيد المراجعة</option>
@@ -833,11 +833,15 @@ function refreshAllSectionSelects(){
 function addRound(reviewNo, reviewDate, receivedDate){
   const tbody = document.getElementById('roundsBody');
   if(reviewNo === undefined) reviewNo = String(tbody.children.length + 1);
+  // A round being added now is being reviewed now. A round restored from a
+  // saved review passes its stored date, even an empty one, so loading never
+  // rewrites a date that was deliberately left blank.
+  if(reviewDate === undefined) reviewDate = todayDMY();
   const row = document.createElement('tr');
   row.innerHTML = `
     <td><input type="text" class="roundNo" value="${escapeHtml(reviewNo||'')}"></td>
-    <td><input type="text" class="roundDate" placeholder="مثال: 5/17/2026" value="${escapeHtml(reviewDate||'')}"></td>
-    <td><input type="text" class="roundReceived" placeholder="مثال: 4/8/2026" value="${escapeHtml(receivedDate||'')}"></td>
+    <td><input type="text" class="roundDate" placeholder="مثال: 17/5/2026" value="${escapeHtml(reviewDate||'')}"></td>
+    <td><input type="text" class="roundReceived" placeholder="مثال: 8/4/2026" value="${escapeHtml(receivedDate||'')}"></td>
     <td><button class="btn btn-danger btn-icon" onclick="this.closest('tr').remove();">×</button></td>
   `;
   tbody.appendChild(row);
@@ -859,14 +863,29 @@ function collectRounds(){
 function daysInMonth(year, month){
   return new Date(year, month, 0).getDate();
 }
+// An Arabic keyboard types ٢٣ rather than 23, so the digits are folded to
+// ASCII before anything tries to read them as a number.
+function toAsciiDigits(value){
+  return (value || '').replace(/[\u0660-\u0669\u06F0-\u06F9]/g, ch => {
+    const code = ch.charCodeAt(0);
+    return String(code >= 0x06F0 ? code - 0x06F0 : code - 0x0660);
+  });
+}
 function parseDMY(value){
-  const m = (value || '').trim().match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})$/);
+  // Day, month, year, separated by a slash, dash or dot, with a two- or
+  // four-digit year — whichever way the date happens to be written.
+  const m = toAsciiDigits(value).trim().match(/^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})$/);
   if(!m) return null;
-  const day = +m[1], month = +m[2], year = +m[3];
+  const day = +m[1], month = +m[2];
+  const year = m[3].length <= 2 ? 2000 + +m[3] : +m[3];
   if(month < 1 || month > 12) return null;
   if(day < 1 || day > daysInMonth(year, month)) return null;
   return { day, month, year };
 }
+function formatDMY(date){
+  return `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear()}`;
+}
+function todayDMY(){ return formatDMY(new Date()); }
 function periodEndFor(fromValue){
   const d = parseDMY(fromValue);
   if(!d) return null;
@@ -885,13 +904,17 @@ function periodEndFor(fromValue){
 let periodToEdited = false;
 
 document.getElementById('periodTo').addEventListener('input', () => { periodToEdited = true; });
-document.getElementById('periodFrom').addEventListener('input', () => {
+function syncPeriodTo(){
   if(periodToEdited) return;
   // Mid-typing the date does not parse yet; leave whatever is there rather
   // than blanking the field on every keystroke.
   const end = periodEndFor(document.getElementById('periodFrom').value);
   if(end) document.getElementById('periodTo').value = end;
-});
+}
+// 'input' covers typing and pasting; 'change' catches a value that arrived
+// without one, such as a browser autofill, once the field is left.
+document.getElementById('periodFrom').addEventListener('input', syncPeriodTo);
+document.getElementById('periodFrom').addEventListener('change', syncPeriodTo);
 
 function newReview(){
   currentId = null;
@@ -902,7 +925,7 @@ function newReview(){
   document.getElementById('statusVal').value = 'Open';
   document.getElementById('reviewerName').value = 'Mohammed';
   document.getElementById('roundsBody').innerHTML = '';
-  addRound('1', '', '');
+  addRound('1');
   document.getElementById('itemsBody').innerHTML = '';
   addItem();
   renderReviewList();
@@ -1185,7 +1208,7 @@ function loadReview(id){
   document.getElementById('reviewerName').value = r.reviewerName || '';
   document.getElementById('roundsBody').innerHTML = '';
   const rounds = (r.rounds && r.rounds.length) ? r.rounds : [{reviewNo:r.reviewNo||'1', reviewDate:r.reviewDate||'', receivedDate:r.receivedDate||''}];
-  rounds.forEach(rd => addRound(rd.reviewNo, rd.reviewDate, rd.receivedDate));
+  rounds.forEach(rd => addRound(rd.reviewNo, rd.reviewDate || '', rd.receivedDate || ''));
   document.getElementById('itemsBody').innerHTML = '';
   (r.items && r.items.length ? r.items : [{}]).forEach(it => addItem(it.sectionNo, it.vNo, it.commentHtml || it.comment || '', it.corrected));
   renderReviewList();
