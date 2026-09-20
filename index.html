@@ -246,7 +246,7 @@
         <div class="grid4">
           <div class="field"><label>رقم المستخلص (IPC No.)</label><input type="text" id="ipcNo"></div>
           <div class="field"><label>من تاريخ</label><input type="text" id="periodFrom" placeholder="مثال: 16/11/2025"></div>
-          <div class="field"><label>إلى تاريخ</label><input type="text" id="periodTo" placeholder="مثال: 22/4/2026"></div>
+          <div class="field"><label>إلى تاريخ</label><input type="text" id="periodTo" placeholder="مثال: 22/4/2026"><div class="note">يُحسب تلقائياً من تاريخ البداية — ويمكن تعديله.</div></div>
           <div class="field"><label>حالة المراجعة</label>
             <select id="statusVal">
               <option value="Open">قيد المراجعة</option>
@@ -850,8 +850,52 @@ function collectRounds(){
   }));
 }
 
+// ---- Period dates: "to" follows "from" until the user edits it ------------
+// A payment period runs from a day to the day before the same day of the next
+// month, so the 1st pairs with the end of that month (30/31, or 28/29 in
+// February) and the 23rd pairs with the 22nd of the month after. Both are the
+// same rule; the day-1 case only looks different because "the day before the
+// 1st of next month" is the last day of this one.
+function daysInMonth(year, month){
+  return new Date(year, month, 0).getDate();
+}
+function parseDMY(value){
+  const m = (value || '').trim().match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})$/);
+  if(!m) return null;
+  const day = +m[1], month = +m[2], year = +m[3];
+  if(month < 1 || month > 12) return null;
+  if(day < 1 || day > daysInMonth(year, month)) return null;
+  return { day, month, year };
+}
+function periodEndFor(fromValue){
+  const d = parseDMY(fromValue);
+  if(!d) return null;
+  if(d.day === 1) return `${daysInMonth(d.year, d.month)}/${d.month}/${d.year}`;
+  let year = d.year, month = d.month + 1;
+  if(month > 12){ month = 1; year++; }
+  // The 31st has no 30th to pair with in a short month, so it lands on that
+  // month's last day rather than spilling into the one after.
+  const day = Math.min(d.day - 1, daysInMonth(year, month));
+  return `${day}/${month}/${year}`;
+}
+
+// Set once the user types in "to" themselves: from then on the field is
+// theirs and "from" stops overwriting it. Loading or starting a review hands
+// the field back to the auto-fill.
+let periodToEdited = false;
+
+document.getElementById('periodTo').addEventListener('input', () => { periodToEdited = true; });
+document.getElementById('periodFrom').addEventListener('input', () => {
+  if(periodToEdited) return;
+  // Mid-typing the date does not parse yet; leave whatever is there rather
+  // than blanking the field on every keystroke.
+  const end = periodEndFor(document.getElementById('periodFrom').value);
+  if(end) document.getElementById('periodTo').value = end;
+});
+
 function newReview(){
   currentId = null;
+  periodToEdited = false;
   document.getElementById('ipcNo').value = '';
   document.getElementById('periodFrom').value = '';
   document.getElementById('periodTo').value = '';
@@ -1136,6 +1180,7 @@ function loadReview(id){
   document.getElementById('ipcNo').value = r.ipcNo || '';
   document.getElementById('periodFrom').value = r.periodFrom || '';
   document.getElementById('periodTo').value = r.periodTo || '';
+  periodToEdited = false;
   document.getElementById('statusVal').value = r.statusVal || 'Open';
   document.getElementById('reviewerName').value = r.reviewerName || '';
   document.getElementById('roundsBody').innerHTML = '';
