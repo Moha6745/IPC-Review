@@ -168,13 +168,23 @@
 
   .user-bar{display:flex; align-items:center; gap:8px; font-size:13px; margin:-8px 0 14px; color:#475569;}
   .user-bar b{color:#0f172a;}
-  .login-overlay{position:fixed; inset:0; background:rgba(15,23,42,.7); z-index:5000; display:none; align-items:center; justify-content:center;}
-  .login-overlay.open{display:flex;}
-  .login-box{background:#fff; border-radius:10px; padding:22px; width:320px; max-width:90%; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25);}
-  .login-box h3{margin:0 0 6px; font-size:16px;}
-  .login-box p{font-size:12px; color:#64748b; margin:0 0 14px;}
-  .login-box input{width:100%; box-sizing:border-box; margin-bottom:12px; text-align:center;}
-  .confirm-overlay{position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:4000; display:none; align-items:center; justify-content:center;}
+  .login-overlay{position:fixed; inset:0; background:#f5f0e8; z-index:5000; display:none; overflow:auto; padding:20px;}
+  .login-overlay.open{display:block;}
+  .login-title{text-align:center; font-size:38px; font-weight:800; letter-spacing:2px; color:#2b2218; margin:48px 0 6px;}
+  .login-title span{color:#b84a38;}
+  .login-sub{text-align:center; color:#a08f78; font-size:15px; margin-bottom:34px;}
+  .login-card{background:#fdfaf3; border:1px solid #d9ccb4; border-radius:14px; padding:28px 30px; max-width:430px; margin:0 auto;}
+  .login-card h3{margin:0 0 16px; font-size:16px; font-weight:500; color:#6b5a44;}
+  .login-user{display:flex; align-items:center; justify-content:space-between; background:#ece7db; border:1px solid #d9ccb4; border-radius:8px; padding:12px 16px; margin-bottom:10px; cursor:pointer;}
+  .login-user:hover{background:#e4ddcc;}
+  .login-user b{font-size:16px; color:#1c1710;}
+  .login-user .go{font-size:22px; color:#1c1710; margin-inline-start:auto; margin-inline-end:16px;}
+  .login-user .del{background:none; border:none; color:#e58a7a; font-size:18px; cursor:pointer; padding:0 4px;}
+  .login-or{text-align:center; color:#a08f78; font-size:12px; margin:20px 0 14px;}
+  .login-new{display:flex; gap:10px;}
+  .login-new input{flex:1; min-width:0; background:#ece7db; border:1px solid #d9ccb4; border-radius:8px; padding:12px 14px; font-size:16px; color:#1c1710;}
+  .login-new button{background:#b84a38; color:#fff; border:none; border-radius:8px; padding:0 22px; font-size:15px; cursor:pointer;}
+  .confirm-overlay{position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:6000; display:none; align-items:center; justify-content:center;}
   .confirm-overlay.open{display:flex;}
   .confirm-box{background:#fff; border-radius:10px; padding:20px; width:300px; max-width:90%; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25);}
   .confirm-box p{font-size:14px; margin:0 0 4px;}
@@ -183,12 +193,15 @@
 </head>
 <body>
 <div class="login-overlay" id="loginModal">
-  <form class="login-box" onsubmit="submitLogin(event)">
-    <h3>تسجيل الدخول</h3>
-    <p>اكتب اسم المستخدم لتظهر لك مراجعاتك فقط.</p>
-    <input type="text" id="loginName" maxlength="40" autocomplete="username" placeholder="اسم المستخدم" required>
-    <button type="submit" class="btn btn-primary" style="width:100%;">دخول</button>
-  </form>
+  <div class="login-title">IPC <span>REVIEW</span></div>
+  <div class="login-sub">اختر ملفك الشخصي للبدء</div>
+  <div class="login-card">
+    <div id="loginUsersWrap"><h3>المستخدمون المحفوظون</h3><div id="loginUsers"></div><div class="login-or">— أو أنشئ ملفاً جديداً —</div></div>
+    <form class="login-new" onsubmit="submitLogin(event)">
+      <input type="text" id="loginName" maxlength="40" autocomplete="off" placeholder="اسم المستخدم" required>
+      <button type="submit">دخول</button>
+    </form>
+  </div>
 </div>
 <div class="app">
   <h1>نظام مراجعة المستخلصات (IPC Review)</h1>
@@ -526,7 +539,43 @@ const REVIEW_INDEX_KEY = 'meta:review-ids';
 // only the current user's. Reviews saved before users existed have no owner
 // and stay visible to everyone until someone saves them, which claims them.
 function userKeyOf(name){ return (name || '').trim().replace(/\s+/g,' ').toLowerCase(); }
-function ownedByOthers(r){ return !!(r && r.owner && currentUser && r.owner !== currentUser.key); }
+const LEGACY_OWNER = 'mohammed';
+function ownedByOthers(r){ return !!(r && currentUser && (r.owner || LEGACY_OWNER) !== currentUser.key); }
+
+// Profiles seen on this device, for the login screen. Only the list of names —
+// the reviews themselves are untouched when a profile is removed from it.
+function getUsers(){
+  try{
+    const l = JSON.parse(localStorage.getItem('ipc_users') || 'null');
+    if(Array.isArray(l) && l.length) return l.filter(x => typeof x === 'string' && userKeyOf(x));
+  }catch(e){}
+  return ['Mohammed'];
+}
+function saveUsers(list){ try{ localStorage.setItem('ipc_users', JSON.stringify(list)); }catch(e){} }
+function renderLoginUsers(){
+  const users = getUsers();
+  document.getElementById('loginUsersWrap').style.display = users.length ? '' : 'none';
+  document.getElementById('loginUsers').innerHTML = users.map((u,i) =>
+    `<div class="login-user" onclick="loginAs(${i})"><b>${escapeHtml(u)}</b><span class="go">←</span><button type="button" class="del" title="إزالة من القائمة" onclick="event.stopPropagation(); removeUser(${i})">✕</button></div>`
+  ).join('');
+}
+function loginAs(i){ const u = getUsers()[i]; if(u) enterAs(u); }
+async function removeUser(i){
+  const users = getUsers();
+  const ok = await showConfirm('إزالة «' + users[i] + '» من القائمة؟ مراجعاته لا تُحذف وتظهر له عند الدخول باسمه مرة أخرى.');
+  if(!ok) return;
+  users.splice(i, 1);
+  saveUsers(users);
+  renderLoginUsers();
+}
+function enterAs(name){
+  const users = getUsers();
+  if(!users.some(u => userKeyOf(u) === userKeyOf(name))){ users.push(name.trim().replace(/\s+/g,' ')); }
+  saveUsers(users);
+  document.getElementById('loginModal').classList.remove('open');
+  setCurrentUser(name);
+  startApp();
+}
 function setCurrentUser(name){
   name = (name || '').trim().replace(/\s+/g,' ');
   currentUser = { key: userKeyOf(name), name };
@@ -542,9 +591,7 @@ function submitLogin(ev){
   ev.preventDefault();
   const name = document.getElementById('loginName').value;
   if(!userKeyOf(name)) return;
-  document.getElementById('loginModal').classList.remove('open');
-  setCurrentUser(name);
-  startApp();
+  enterAs(name);
 }
 
 async function readReviewIndex(){
@@ -1827,8 +1874,8 @@ if(savedUser && userKeyOf(savedUser)){
   setCurrentUser(savedUser);
   startApp();
 }else{
+  renderLoginUsers();
   document.getElementById('loginModal').classList.add('open');
-  document.getElementById('loginName').focus();
 }
 </script>
 </body>
