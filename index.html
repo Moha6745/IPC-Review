@@ -166,6 +166,14 @@
   .ipc-no{font-weight:600;}
   .empty-note{font-size:12px; color:#94a3b8; padding:12px 14px;}
 
+  .user-bar{display:flex; align-items:center; gap:8px; font-size:13px; margin:-8px 0 14px; color:#475569;}
+  .user-bar b{color:#0f172a;}
+  .login-overlay{position:fixed; inset:0; background:rgba(15,23,42,.7); z-index:5000; display:none; align-items:center; justify-content:center;}
+  .login-overlay.open{display:flex;}
+  .login-box{background:#fff; border-radius:10px; padding:22px; width:320px; max-width:90%; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25);}
+  .login-box h3{margin:0 0 6px; font-size:16px;}
+  .login-box p{font-size:12px; color:#64748b; margin:0 0 14px;}
+  .login-box input{width:100%; box-sizing:border-box; margin-bottom:12px; text-align:center;}
   .confirm-overlay{position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:4000; display:none; align-items:center; justify-content:center;}
   .confirm-overlay.open{display:flex;}
   .confirm-box{background:#fff; border-radius:10px; padding:20px; width:300px; max-width:90%; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.25);}
@@ -174,10 +182,19 @@
 </style>
 </head>
 <body>
+<div class="login-overlay" id="loginModal">
+  <form class="login-box" onsubmit="submitLogin(event)">
+    <h3>تسجيل الدخول</h3>
+    <p>اكتب اسم المستخدم لتظهر لك مراجعاتك فقط.</p>
+    <input type="text" id="loginName" maxlength="40" autocomplete="username" placeholder="اسم المستخدم" required>
+    <button type="submit" class="btn btn-primary" style="width:100%;">دخول</button>
+  </form>
+</div>
 <div class="app">
   <h1>نظام مراجعة المستخلصات (IPC Review)</h1>
   <div class="sub">تسجيل ملاحظات مراجعة مستخلصات الاستشاري — حفظ تلقائي، تصدير Excel وPDF، وطباعة بنفس تنسيق النموذج الرسمي.</div>
   <div id="storageBadge" class="storage-badge ok">جارِ التحقق من التخزين...</div>
+  <div class="user-bar">المستخدم: <b id="userName"></b> <button class="btn btn-secondary btn-sm" onclick="switchUser()">تبديل المستخدم</button></div>
 
   <div class="nav-tabs">
     <button class="nav-tab active" id="tabReview" onclick="showPage('review')">مراجعة مستخلص</button>
@@ -360,6 +377,7 @@ let contractorSections = [];
 let consultantSections = [];
 let reviews = {}; // id -> review object
 let recoveredCount = 0; // reviews rescued from an index that had lost them
+let currentUser = null;  // { key, name } — whose reviews this browser shows
 let loadPromise = null;  // resolves once loadAll() has finished reading storage
 const savedRanges = new WeakMap();
 let activeComment = null;
@@ -500,6 +518,34 @@ const storage = {
 };
 
 const REVIEW_INDEX_KEY = 'meta:review-ids';
+
+// ---- Users -------------------------------------------------------------
+// A username only separates people's reviews on a shared cloud project — it is
+// not a password, so anyone who types someone else's name sees their reviews.
+// Every review carries the `owner` key of whoever saved it; loadAll() keeps
+// only the current user's. Reviews saved before users existed have no owner
+// and stay visible to everyone until someone saves them, which claims them.
+function userKeyOf(name){ return (name || '').trim().replace(/\s+/g,' ').toLowerCase(); }
+function ownedByOthers(r){ return !!(r && r.owner && currentUser && r.owner !== currentUser.key); }
+function setCurrentUser(name){
+  name = (name || '').trim().replace(/\s+/g,' ');
+  currentUser = { key: userKeyOf(name), name };
+  try{ localStorage.setItem('ipc_user', name); }catch(e){}
+  document.getElementById('userName').textContent = name;
+  document.getElementById('reviewerName').value = name;
+}
+function switchUser(){
+  try{ localStorage.removeItem('ipc_user'); }catch(e){}
+  location.reload();
+}
+function submitLogin(ev){
+  ev.preventDefault();
+  const name = document.getElementById('loginName').value;
+  if(!userKeyOf(name)) return;
+  document.getElementById('loginModal').classList.remove('open');
+  setCurrentUser(name);
+  startApp();
+}
 
 async function readReviewIndex(){
   try{
@@ -693,6 +739,11 @@ async function loadAll(){
         const r = await storage.get('review:' + id);
         if(r && r.value) reviews[id] = JSON.parse(r.value);
       }catch(e){}
+    }
+    // Other people's reviews may be on this device or in the cloud sweep above;
+    // they are not this user's to see, list, export or overwrite.
+    for(const id of Object.keys(reviews)){
+      if(ownedByOthers(reviews[id])) delete reviews[id];
     }
     const recovered = Object.keys(reviews).filter(id => stored.indexOf(id) === -1).length;
     // Write the repaired index back so the recovery is permanent.
@@ -923,7 +974,7 @@ function newReview(){
   document.getElementById('periodFrom').value = '';
   document.getElementById('periodTo').value = '';
   document.getElementById('statusVal').value = 'Open';
-  document.getElementById('reviewerName').value = 'Mohammed';
+  document.getElementById('reviewerName').value = currentUser ? currentUser.name : '';
   document.getElementById('roundsBody').innerHTML = '';
   addRound('1');
   document.getElementById('itemsBody').innerHTML = '';
@@ -1046,6 +1097,7 @@ function collectForm(){
     periodTo: document.getElementById('periodTo').value,
     statusVal: document.getElementById('statusVal').value,
     reviewerName: document.getElementById('reviewerName').value,
+    owner: currentUser.key,
     rounds: collectRounds(),
     items,
     updatedAt: new Date().toISOString()
@@ -1125,9 +1177,10 @@ async function restoreBackup(input){
   if(loadPromise){ try{ await loadPromise; }catch(e){} }
   let added = 0;
   for(const r of list){
-    if(!r || !r.id) continue;
+    if(!r || !r.id || ownedByOthers(r)) continue;
     const existing = reviews[r.id];
     if(existing && (existing.updatedAt || '') >= (r.updatedAt || '')) continue;
+    if(!r.owner) r.owner = currentUser.key;
     reviews[r.id] = r;
     await storage.set('review:' + r.id, JSON.stringify(r), false);
     added++;
@@ -1760,11 +1813,23 @@ async function printReview(){
   }
 }
 
-loadPromise = loadAll().then(() => {
-  updateStorageBadge();
-  if(Object.keys(reviews).length===0) newReview();
-  if(recoveredCount > 0) setStatus('تم استرجاع ' + recoveredCount + ' مراجعة ✓');
-});
+function startApp(){
+  loadPromise = loadAll().then(() => {
+    updateStorageBadge();
+    if(Object.keys(reviews).length===0) newReview();
+    if(recoveredCount > 0) setStatus('تم استرجاع ' + recoveredCount + ' مراجعة ✓');
+  });
+}
+
+let savedUser = null;
+try{ savedUser = localStorage.getItem('ipc_user'); }catch(e){}
+if(savedUser && userKeyOf(savedUser)){
+  setCurrentUser(savedUser);
+  startApp();
+}else{
+  document.getElementById('loginModal').classList.add('open');
+  document.getElementById('loginName').focus();
+}
 </script>
 </body>
 </html>
