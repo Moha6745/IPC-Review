@@ -74,8 +74,10 @@
   /* ---- Single global formatting toolbar for comments (top-left of the comments card) ---- */
   .rt-toolbar-global{display:flex; align-items:center; gap:6px; margin-bottom:10px;}
   .rt-toolbar-global .hint{font-size:11px; color:var(--muted);}
-  .rt-btn{border:1px solid var(--border); background:#fff; border-radius:4px; width:26px; height:26px; font-size:12px; cursor:pointer; padding:0; line-height:1;}
+  .rt-btn{display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); background:#fff; border-radius:4px; width:26px; height:26px; font-size:12px; color:#333; cursor:pointer; padding:0; line-height:1;}
   .rt-btn:hover{background:var(--accent-light);}
+  .rt-btn.active{background:var(--accent-light); border-color:var(--accent); color:var(--accent);}
+  .rt-sep{width:1px; height:18px; background:var(--border); margin:0 2px;}
   .rt-color-group{position:relative;}
   .rt-color-wrap{display:inline-flex; flex-direction:column; align-items:center; justify-content:center; width:26px; height:26px; border:1px solid var(--border); border-radius:4px; cursor:pointer; background:#fff; padding:0;}
   .rt-color-icon{font-weight:bold; font-size:12px; line-height:16px; color:#333; font-family:Georgia, serif;}
@@ -313,6 +315,7 @@
         <h2>الملاحظات (Comments)</h2>
         <div class="rt-toolbar-global">
           <button type="button" id="rtBoldBtn" class="rt-btn" title="عريض"><b>B</b></button>
+          <button type="button" id="rtUnderlineBtn" class="rt-btn" title="تسطير"><u>U</u></button>
           <div class="rt-color-group">
             <button type="button" class="rt-color-wrap" id="rtColorBtn" title="لون الخط">
               <span class="rt-color-icon">A</span>
@@ -326,6 +329,10 @@
             </div>
           </div>
           <input type="color" id="rtColorInputHidden" style="display:none;">
+          <span class="rt-sep"></span>
+          <button type="button" class="rt-btn rt-align-btn" data-align="right" title="محاذاة لليمين"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><rect x="2" y="3" width="12" height="1.5" rx=".75"/><rect x="5" y="6.2" width="9" height="1.5" rx=".75"/><rect x="2" y="9.4" width="12" height="1.5" rx=".75"/><rect x="5" y="12.6" width="9" height="1.5" rx=".75"/></svg></button>
+          <button type="button" class="rt-btn rt-align-btn" data-align="center" title="توسيط"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><rect x="2" y="3" width="12" height="1.5" rx=".75"/><rect x="4" y="6.2" width="8" height="1.5" rx=".75"/><rect x="2" y="9.4" width="12" height="1.5" rx=".75"/><rect x="4" y="12.6" width="8" height="1.5" rx=".75"/></svg></button>
+          <button type="button" class="rt-btn rt-align-btn" data-align="left" title="محاذاة لليسار"><svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><rect x="2" y="3" width="12" height="1.5" rx=".75"/><rect x="2" y="6.2" width="9" height="1.5" rx=".75"/><rect x="2" y="9.4" width="12" height="1.5" rx=".75"/><rect x="2" y="12.6" width="9" height="1.5" rx=".75"/></svg></button>
         </div>
         <table class="items" id="itemsTable">
           <thead>
@@ -1053,7 +1060,10 @@ function addItem(sectionNo='', vNo='', commentHtml='', corrected=false){
 }
 
 document.addEventListener('focusin', (e) => {
-  if(e.target.classList && e.target.classList.contains('comment')) activeComment = e.target;
+  if(e.target.classList && e.target.classList.contains('comment')){
+    activeComment = e.target;
+    refreshToolbarState();
+  }
 });
 document.addEventListener('selectionchange', () => {
   const sel = window.getSelection();
@@ -1065,14 +1075,21 @@ document.addEventListener('selectionchange', () => {
   if(editable) savedRanges.set(editable, range.cloneRange());
 });
 
-document.getElementById('rtBoldBtn').addEventListener('mousedown', (e) => e.preventDefault());
-document.getElementById('rtBoldBtn').addEventListener('click', () => {
+// Bold and underline both run against the comment the user last had the caret
+// in: the toolbar lives outside the cells, so the button swallows its own
+// mousedown and the saved range is put back before execCommand runs.
+function runCommentCommand(cmd){
   if(!activeComment) return;
   const range = savedRanges.get(activeComment);
   activeComment.focus();
   if(range){ const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
-  document.execCommand('bold');
-});
+  document.execCommand(cmd);
+  refreshToolbarState();
+}
+document.getElementById('rtBoldBtn').addEventListener('mousedown', (e) => e.preventDefault());
+document.getElementById('rtBoldBtn').addEventListener('click', () => runCommentCommand('bold'));
+document.getElementById('rtUnderlineBtn').addEventListener('mousedown', (e) => e.preventDefault());
+document.getElementById('rtUnderlineBtn').addEventListener('click', () => runCommentCommand('underline'));
 document.getElementById('rtColorInputHidden').addEventListener('input', (e) => {
   applyCommentColor(e.target.value);
 });
@@ -1081,6 +1098,80 @@ const STANDARD_COLORS = ['#C00000','#FF0000','#FFC000','#FFFF00','#92D050','#00B
 document.getElementById('cpStandardGrid').innerHTML = STANDARD_COLORS.map(c =>
   `<span class="cp-swatch" style="background:${c}" data-color="${c}" title="${c}"></span>`
 ).join('');
+
+// ---- Line alignment ----
+// The alignment has to land on an element *inside* the comment. Only the
+// comment DIV's innerHTML is saved, so a text-align that Chrome would
+// otherwise park on the contenteditable host itself is lost on the next save.
+// Chrome also leaves the first line as loose inline nodes and only wraps later
+// lines in DIVs, so every run of loose nodes gets a block of its own first.
+const BLOCK_TAGS = new Set(['DIV','P','LI','UL','OL','BLOCKQUOTE','H1','H2','H3','H4','H5','H6','PRE']);
+const BLOCK_SELECTOR = Array.from(BLOCK_TAGS).join(',').toLowerCase();
+function commentBlocks(el){
+  const blocks = [];
+  let run = null;
+  Array.from(el.childNodes).forEach(node => {
+    if(node.nodeType === 1 && BLOCK_TAGS.has(node.tagName)){ run = null; blocks.push(node); return; }
+    if(!run){ run = document.createElement('div'); el.insertBefore(run, node); blocks.push(run); }
+    run.appendChild(node);
+  });
+  if(blocks.length === 0){
+    const d = document.createElement('div');
+    d.appendChild(document.createElement('br'));
+    el.appendChild(d);
+    blocks.push(d);
+  }
+  return blocks;
+}
+function applyCommentAlign(align){
+  if(!activeComment) return;
+  const saved = savedRanges.get(activeComment);
+  const startNode = saved ? saved.startContainer : null;
+  const endNode = saved ? saved.endContainer : null;
+  const blocks = commentBlocks(activeComment);
+  let i0 = startNode ? blocks.findIndex(b => b === startNode || b.contains(startNode)) : -1;
+  let i1 = endNode ? blocks.findIndex(b => b === endNode || b.contains(endNode)) : -1;
+  // A caret sitting directly on the comment DIV belongs to no single block;
+  // align the whole comment then.
+  if(i0 < 0 && i1 < 0){ i0 = 0; i1 = blocks.length - 1; }
+  else { if(i0 < 0) i0 = i1; if(i1 < 0) i1 = i0; }
+  blocks.slice(Math.min(i0,i1), Math.max(i0,i1) + 1).forEach(b => { b.style.textAlign = align; });
+  activeComment.focus();
+  if(saved){
+    try{ const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(saved); }catch(err){}
+  }
+  refreshToolbarState();
+}
+document.querySelectorAll('.rt-align-btn').forEach(btn => {
+  btn.addEventListener('mousedown', (e) => e.preventDefault());
+  btn.addEventListener('click', () => applyCommentAlign(btn.dataset.align));
+});
+
+// Mirrors the caret back into the toolbar so the buttons show what is already
+// applied instead of only what is about to be.
+function refreshToolbarState(){
+  const focused = !!activeComment && document.activeElement === activeComment;
+  let bold = false, underline = false, align = null;
+  if(focused){
+    try{ bold = document.queryCommandState('bold'); underline = document.queryCommandState('underline'); }catch(err){}
+    const sel = window.getSelection();
+    let node = (sel && sel.rangeCount) ? sel.getRangeAt(0).startContainer : null;
+    if(node && node.nodeType === 3) node = node.parentElement;
+    if(node && node.closest && activeComment.contains(node)){
+      const block = node.closest(BLOCK_SELECTOR);
+      const target = (block && block !== activeComment) ? block : activeComment;
+      align = getComputedStyle(target).textAlign;
+      if(align === 'start') align = 'right';
+      if(align === 'end') align = 'left';
+    }
+  }
+  document.getElementById('rtBoldBtn').classList.toggle('active', bold);
+  document.getElementById('rtUnderlineBtn').classList.toggle('active', underline);
+  document.querySelectorAll('.rt-align-btn').forEach(b => {
+    b.classList.toggle('active', focused && b.dataset.align === align);
+  });
+}
+document.addEventListener('selectionchange', refreshToolbarState);
 
 function applyCommentColor(color){
   document.getElementById('rtColorBar').style.background = color;
@@ -1318,25 +1409,37 @@ function loadReview(id){
 
 document.getElementById('search').addEventListener('input', renderReviewList);
 
-// ---- Convert a rich-text comment DIV into ExcelJS richText runs (preserves bold + color) ----
+// ---- Convert a rich-text comment DIV into ExcelJS richText runs (preserves bold + underline + color) ----
+// Accepts both shapes the editor produces: rgb(...) from an inline style and
+// #rrggbb from a <font color>. Reading the hex form with the rgb() digit
+// scan used to strip the letters out of it, so #C00000 exported as 00.
 function rgbToHex(rgbStr){
-  const m = rgbStr && rgbStr.match(/\d+/g);
-  if(!m) return null;
+  if(!rgbStr) return null;
+  const hex = rgbStr.trim().match(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i);
+  if(hex){
+    const h = hex[1];
+    return (h.length === 3 ? h.split('').map(c => c + c).join('') : h).toUpperCase();
+  }
+  const m = rgbStr.match(/\d+/g);
+  if(!m || m.length < 3) return null;
   return m.slice(0,3).map(x => parseInt(x).toString(16).padStart(2,'0')).join('').toUpperCase();
 }
 function domToRuns(node, state, runs){
   node.childNodes.forEach(child => {
     if(child.nodeType === 3){
-      if(child.textContent) runs.push({ text: child.textContent, bold: state.bold, color: state.color });
+      if(child.textContent) runs.push({ text: child.textContent, bold: state.bold, underline: state.underline, color: state.color });
     }else if(child.nodeType === 1){
       const tag = child.tagName;
       const next = Object.assign({}, state);
       if(tag === 'B' || tag === 'STRONG') next.bold = true;
+      if(tag === 'U' || tag === 'INS') next.underline = true;
+      const styleDecor = child.style && (child.style.textDecorationLine || child.style.textDecoration);
+      if(styleDecor && styleDecor.indexOf('underline') >= 0) next.underline = true;
       const styleColor = child.style && child.style.color;
       if(styleColor){ const hex = rgbToHex(styleColor); if(hex) next.color = hex; }
       if(child.color){ const hex = rgbToHex(child.color) || (child.color[0]==='#' ? child.color.slice(1) : null); if(hex) next.color = hex; }
       domToRuns(child, next, runs);
-      if(tag === 'DIV' || tag === 'P' || tag === 'BR'){ runs.push({ text:'\n', bold:false, color:null }); }
+      if(tag === 'DIV' || tag === 'P' || tag === 'BR'){ runs.push({ text:'\n', bold:false, underline:false, color:null }); }
     }
   });
   return runs;
@@ -1344,10 +1447,22 @@ function domToRuns(node, state, runs){
 function commentHtmlToRuns(html){
   const tmp = document.createElement('div');
   tmp.innerHTML = html || '';
-  const runs = domToRuns(tmp, { bold:false, color:null }, []);
+  const runs = domToRuns(tmp, { bold:false, underline:false, color:null }, []);
   while(runs.length && runs[runs.length-1].text === '\n') runs.pop();
-  if(runs.length === 0) return [{ text:'', bold:false, color:'1D4ED8' }];
+  if(runs.length === 0) return [{ text:'', bold:false, underline:false, color:'1D4ED8' }];
   return runs;
+}
+
+// Excel has one horizontal alignment per cell, so a comment whose lines
+// disagree falls back to the centred default the sheet has always used.
+function commentHtmlAlign(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html || '';
+  const aligns = Array.from(tmp.querySelectorAll('*'))
+    .map(n => n.style && n.style.textAlign)
+    .filter(a => a === 'left' || a === 'center' || a === 'right');
+  if(!aligns.length) return 'center';
+  return aligns.every(a => a === aligns[0]) ? aligns[0] : 'center';
 }
 
 // ---- Excel export (ExcelJS supports real fills/borders/fonts) ----
@@ -1415,9 +1530,9 @@ function buildReviewSheet(wb, r, sheetName){
     const runs = commentHtmlToRuns(it.commentHtml || it.comment || '');
     row.getCell(4).value = { richText: runs.map(rn => ({
       text: rn.text,
-      font: { bold: !!rn.bold, color: { argb: 'FF' + (rn.color || '1D4ED8') }, size: 11 }
+      font: { bold: !!rn.bold, underline: !!rn.underline, color: { argb: 'FF' + (rn.color || '1D4ED8') }, size: 11 }
     })) };
-    row.getCell(4).alignment = { horizontal:'center', vertical:'middle', wrapText:true };
+    row.getCell(4).alignment = { horizontal: commentHtmlAlign(it.commentHtml || ''), vertical:'middle', wrapText:true };
     row.getCell(5).alignment = { horizontal:'center', vertical:'middle' };
     row.eachCell({includeEmpty:true}, c => c.border = border);
     const plainText = runs.map(rn => rn.text).join('');
