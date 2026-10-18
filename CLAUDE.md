@@ -69,3 +69,9 @@ before committing.
 - **Section lists** differ between contractor and consultant projects and are
   versioned by `SECTIONS_DEFAULTS_VERSION`; bump it when the baked-in
   defaults change so browsers pick the new list up once.
+- **PDF and print** share `renderPrintHost(r)` and come out as one custom-sized
+  page that matches the content, so there is no pagination and no blank tail —
+  the orientation has to follow the content, because jsPDF reads the custom
+  format as `[short side, long side]`. Only the rows the reviewer filled in are
+  printed (`filledItems`): the form always carries a spare empty row, and a
+  padded table reads as comments left blank.
