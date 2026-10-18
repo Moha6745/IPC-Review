@@ -35,6 +35,9 @@
   .review-item .rp{font-weight:600;}
   .review-item .rc{color:var(--muted); font-size:11px;}
   .sidebar-search{width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:10px; font-size:13px;}
+  #reviewList{overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin;}
+  #reviewList::-webkit-scrollbar{width:6px;}
+  #reviewList::-webkit-scrollbar-thumb{background:#cbd5e1; border-radius:3px;}
 
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
   .grid4{display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
@@ -223,10 +226,10 @@
     <div class="sidebar">
       <div class="card">
         <h2>المراجعات المحفوظة</h2>
+        <button class="btn btn-secondary btn-sm" style="width:100%; margin-bottom:10px;" onclick="newReview()">+ مراجعة جديدة</button>
         <input class="sidebar-search" id="search" placeholder="بحث بالمشروع أو الشركة...">
         <div id="reviewList"></div>
-        <button class="btn btn-secondary btn-sm" style="width:100%; margin-top:8px;" onclick="newReview()">+ مراجعة جديدة</button>
-        <div style="display:flex; gap:6px; margin-top:6px;">
+        <div style="display:flex; gap:6px; margin-top:8px;">
           <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="exportBackup()">نسخة احتياطية</button>
           <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="document.getElementById('restoreFile').click()">استعادة</button>
         </div>
@@ -1361,6 +1364,19 @@ function setStatus(msg){
   if(msg) setTimeout(()=>{ if(el.textContent===msg) el.textContent=''; }, 3000);
 }
 
+// The saved-reviews list shows this many entries; the rest come into view on scroll.
+const REVIEW_LIST_VISIBLE = 10;
+
+function capReviewList(){
+  const list = document.getElementById('reviewList');
+  if(!list) return;
+  list.style.maxHeight = '';
+  const items = list.children;
+  if(items.length <= REVIEW_LIST_VISIBLE) return;
+  const h = items[REVIEW_LIST_VISIBLE].offsetTop - items[0].offsetTop;
+  if(h > 0) list.style.maxHeight = h + 'px';
+}
+
 function renderReviewList(){
   const q = (document.getElementById('search').value || '').toLowerCase();
   const list = document.getElementById('reviewList');
@@ -1370,6 +1386,7 @@ function renderReviewList(){
   );
   if(filtered.length === 0){
     list.innerHTML = '<div style="font-size:12px; color:#94a3b8;">لا توجد مراجعات محفوظة</div>';
+    capReviewList();
     renderProjectsPage();
     return;
   }
@@ -1382,6 +1399,7 @@ function renderReviewList(){
       <div class="rc">${escapeHtml(r.company)} · ${rounds.length} مراجعة (آخرها رقم ${escapeHtml(last.reviewNo||'-')} · ${escapeHtml(last.reviewDate||'')})</div>
     </div>
   `;}).join('');
+  capReviewList();
   renderProjectsPage();
 }
 
@@ -1591,7 +1609,7 @@ function showPage(page){
   document.getElementById('pageProjects').classList.toggle('active', isProjects);
   document.getElementById('tabReview').classList.toggle('active', !isProjects);
   document.getElementById('tabProjects').classList.toggle('active', isProjects);
-  if(isProjects) renderProjectsPage();
+  if(isProjects) renderProjectsPage(); else capReviewList();
 }
 
 function setProjStatus(msg){
