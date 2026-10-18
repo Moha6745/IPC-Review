@@ -1857,6 +1857,28 @@ function pdfFilename(r, ext){
   return `IPC-Review-${r.project}-${r.ipcNo||''}`.replace(/[^a-zA-Z0-9-]/g,'_') + '.' + ext;
 }
 
+// The comment cell as plain text, for telling a filled row from an empty one:
+// an untouched contenteditable still holds markup like <br> or &nbsp;.
+function itemCommentText(it){
+  if(it.commentText) return it.commentText;
+  return (it.commentHtml || it.comment || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ');
+}
+
+// Only the rows the reviewer actually filled in. The form always carries a
+// spare empty row, and the printed table used to be padded out to ten, so a
+// six-comment review came out with four blank lines nobody had written.
+function filledItems(r){
+  return (r.items || []).filter(it =>
+    (it.sectionNo || '').trim() ||
+    (it.vNo || '').trim() ||
+    itemCommentText(it).trim() ||
+    it.corrected
+  );
+}
+
 // ---- Shared print/PDF markup ----
 function renderPrintHost(r){
   const detailRows = [];
@@ -1875,19 +1897,20 @@ function renderPrintHost(r){
   });
 
   const itemRows = [];
-  const maxRows = Math.max(r.items.length, 10);
-  for(let i=0;i<maxRows;i++){
-    const it = r.items[i] || {};
+  // Nothing filled in yet still prints one row, so the table is not a bare header.
+  const items = filledItems(r);
+  const printItems = items.length ? items : [{}];
+  printItems.forEach((it, i) => {
     itemRows.push(`
       <tr>
-        <td>${it.count || (i+1)}</td>
+        <td>${i+1}</td>
         <td class="val">${escapeHtml(it.sectionNo||'')}</td>
         <td class="val">${escapeHtml(it.vNo||'')}</td>
-        <td class="commentcell val">${it.commentHtml || ''}</td>
+        <td class="commentcell val">${it.commentHtml || escapeHtml(it.comment || '')}</td>
         <td><span class="chk">${it.corrected ? '&#10003;' : ''}</span></td>
       </tr>
     `);
-  }
+  });
   document.getElementById('printHostInner').innerHTML = `
     <table class="pt">${detailRows.join('')}</table>
     <table class="pt" style="margin-top:8px;">
@@ -1933,11 +1956,17 @@ async function buildPdfBlob(r){
     const canvas = await worker.get('canvas');
     const contentWidthMM = 190;
     const contentHeightMM = contentWidthMM * (canvas.height / canvas.width);
+    const pageWidthMM = contentWidthMM + marginMM*2;
+    const pageHeightMM = contentHeightMM + marginMM*2;
     await worker.set({
       jsPDF: {
         unit:'mm',
-        format: [contentWidthMM + marginMM*2, contentHeightMM + marginMM*2],
-        orientation:'portrait'
+        format: [pageWidthMM, pageHeightMM],
+        // jsPDF reads the pair as [short side, long side] and lets the
+        // orientation decide which is the width, so a short review (wider
+        // than it is tall) needs "landscape" or the page comes out upright
+        // with the content stranded at the top of a blank sheet.
+        orientation: pageHeightMM >= pageWidthMM ? 'portrait' : 'landscape'
       }
     });
     blob = await worker.outputPdf('blob');
