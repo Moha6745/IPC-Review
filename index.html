@@ -1538,10 +1538,11 @@ function buildReviewSheet(wb, r, sheetName){
     c.fill = headFill; c.font = { bold:true }; c.alignment = { horizontal:'center', vertical:'middle' }; c.border = border;
   });
 
-  const maxRows = Math.max(r.items.length, 10);
-  for(let i=0;i<maxRows;i++){
-    const it = r.items[i] || {};
-    const row = ws.addRow([it.count || (i+1), it.sectionNo||'', it.vNo||'', null, it.corrected ? true : null]);
+  // Row for row with the form, like the printed table: nothing padded on, and
+  // an empty row the reviewer added is a row of the sheet.
+  const sheetItems = (r.items && r.items.length) ? r.items : [{}];
+  sheetItems.forEach((it, i) => {
+    const row = ws.addRow([i+1, it.sectionNo||'', it.vNo||'', null, it.corrected ? true : null]);
     row.getCell(1).alignment = { horizontal:'center', vertical:'middle' };
     row.getCell(2).alignment = { horizontal:'center', vertical:'middle' }; row.getCell(2).font = blueFont;
     row.getCell(3).alignment = { horizontal:'center', vertical:'middle' }; row.getCell(3).font = blueFont;
@@ -1556,7 +1557,7 @@ function buildReviewSheet(wb, r, sheetName){
     const plainText = runs.map(rn => rn.text).join('');
     const lineCount = Math.max(1, plainText.split('\n').length, Math.ceil(plainText.length / 60));
     row.height = Math.max(30, lineCount * 16 + 8);
-  }
+  });
 
   return ws;
 }
@@ -1857,28 +1858,6 @@ function pdfFilename(r, ext){
   return `IPC-Review-${r.project}-${r.ipcNo||''}`.replace(/[^a-zA-Z0-9-]/g,'_') + '.' + ext;
 }
 
-// The comment cell as plain text, for telling a filled row from an empty one:
-// an untouched contenteditable still holds markup like <br> or &nbsp;.
-function itemCommentText(it){
-  if(it.commentText) return it.commentText;
-  return (it.commentHtml || it.comment || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/gi, ' ');
-}
-
-// Only the rows the reviewer actually filled in. The form always carries a
-// spare empty row, and the printed table used to be padded out to ten, so a
-// six-comment review came out with four blank lines nobody had written.
-function filledItems(r){
-  return (r.items || []).filter(it =>
-    (it.sectionNo || '').trim() ||
-    (it.vNo || '').trim() ||
-    itemCommentText(it).trim() ||
-    it.corrected
-  );
-}
-
 // ---- Shared print/PDF markup ----
 function renderPrintHost(r){
   const detailRows = [];
@@ -1897,9 +1876,10 @@ function renderPrintHost(r){
   });
 
   const itemRows = [];
-  // Nothing filled in yet still prints one row, so the table is not a bare header.
-  const items = filledItems(r);
-  const printItems = items.length ? items : [{}];
+  // The table mirrors the form: every row the reviewer added is printed, an
+  // empty one included, and nothing is padded on top of them. A review with no
+  // rows at all still prints one, so the table is not a bare header.
+  const printItems = (r.items && r.items.length) ? r.items : [{}];
   printItems.forEach((it, i) => {
     itemRows.push(`
       <tr>
@@ -1929,11 +1909,12 @@ function renderPrintHost(r){
   `;
 }
 
-// Build the PDF as a single custom-sized page that exactly matches the
-// rendered content — no A4 pagination, so nothing gets cut off mid-table.
-// The page size is derived from html2pdf's own captured canvas (not a
-// separate DOM measurement), so the page and the image are always a
-// perfect match — no leftover sliver getting clipped on any edge.
+// Build the PDF as a single page, A4 wide and never shorter than A4, growing
+// taller when the review needs it. Two things decide this shape. The capture
+// is one image, so a page break would slice a row through the middle — hence
+// one page, however long. And a page shorter than the paper gets centred on
+// the sheet by viewers and printers, which is what put the table halfway down
+// the page — hence the A4 floor, which keeps it against the top margin.
 async function buildPdfBlob(r){
   renderPrintHost(r);
   const host = document.getElementById('printHost');
@@ -1942,7 +1923,8 @@ async function buildPdfBlob(r){
   window.scrollTo(0, 0);
   await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
   const el = document.getElementById('printHostInner');
-  const marginMM = 6;
+  const marginMM = 8;
+  const pageWidthMM = 210, a4HeightMM = 297;
   let blob;
   try{
     const worker = html2pdf().set({
@@ -1952,29 +1934,22 @@ async function buildPdfBlob(r){
       jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
     }).from(el);
 
+    // The page is sized from html2pdf's own captured canvas rather than a
+    // separate DOM measurement, so page and image can never disagree.
     await worker.toCanvas();
     const canvas = await worker.get('canvas');
-    const contentWidthMM = 190;
+    const contentWidthMM = pageWidthMM - marginMM*2;
     const contentHeightMM = contentWidthMM * (canvas.height / canvas.width);
-    const pageWidthMM = contentWidthMM + marginMM*2;
-    const pageHeightMM = contentHeightMM + marginMM*2;
+    const pageHeightMM = Math.max(a4HeightMM, contentHeightMM + marginMM*2);
     await worker.set({
-      jsPDF: {
-        unit:'mm',
-        format: [pageWidthMM, pageHeightMM],
-        // jsPDF reads the pair as [short side, long side] and lets the
-        // orientation decide which is the width, so a short review (wider
-        // than it is tall) needs "landscape" or the page comes out upright
-        // with the content stranded at the top of a blank sheet.
-        orientation: pageHeightMM >= pageWidthMM ? 'portrait' : 'landscape'
-      }
+      jsPDF: { unit:'mm', format: [pageWidthMM, pageHeightMM], orientation:'portrait' }
     });
     blob = await worker.outputPdf('blob');
   }catch(e){
     // Fallback: plain A4 with automatic pagination, in case the custom
     // page-size path fails for some reason — better a paginated PDF than none.
     blob = await html2pdf().set({
-      margin: 8,
+      margin: marginMM,
       image: { type:'jpeg', quality:0.98 },
       html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff', scrollX:0, scrollY:0 },
       jsPDF: { unit:'mm', format:'a4', orientation:'portrait' },
