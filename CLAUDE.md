@@ -69,9 +69,13 @@ before committing.
 - **Section lists** differ between contractor and consultant projects and are
   versioned by `SECTIONS_DEFAULTS_VERSION`; bump it when the baked-in
   defaults change so browsers pick the new list up once.
-- **PDF and print** share `renderPrintHost(r)` and come out as one custom-sized
-  page that matches the content, so there is no pagination and no blank tail —
-  the orientation has to follow the content, because jsPDF reads the custom
-  format as `[short side, long side]`. Only the rows the reviewer filled in are
-  printed (`filledItems`): the form always carries a spare empty row, and a
-  padded table reads as comments left blank.
+- **PDF and print** share `renderPrintHost(r)` and come out as one page: A4
+  wide, never shorter than A4, growing taller when a long review needs it. The
+  capture is a single image, so a page break would slice a row in half; and a
+  page shorter than the paper is centred on the sheet by viewers and printers,
+  which is what used to leave the table sitting halfway down. The A4 floor is
+  what keeps it against the top margin.
+- **The exported tables mirror the form row for row**, in both the sheet and the
+  printed table: nothing is padded on (they used to run to ten rows, which read
+  as comments left blank), and an empty row the reviewer added is exported as an
+  empty row, because adding one is how they leave a gap.
