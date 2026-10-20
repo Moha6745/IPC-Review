@@ -144,7 +144,15 @@
     display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700;
     color:var(--accent); padding:0 2px 8px; border-bottom:2px solid var(--accent-light); margin-bottom:12px;
   }
+  .class-head{flex-wrap:wrap;}
   .class-head .pill{font-weight:600;}
+  .class-filter{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-inline-start:auto;}
+  .class-filter .chip{
+    font-family:inherit; font-size:11px; font-weight:600; border:1px solid var(--border);
+    background:#fff; color:var(--muted); border-radius:999px; padding:3px 10px; cursor:pointer;
+  }
+  .class-filter .chip:hover{background:#f1f5f9;}
+  .class-filter .chip.on{background:var(--accent); border-color:var(--accent); color:#fff;}
 
   .proj-card{background:var(--panel); border:1px solid var(--border); border-radius:10px; margin-bottom:10px; overflow:hidden;}
   .proj-head{display:flex; align-items:center; gap:10px; padding:12px 14px; cursor:pointer;}
@@ -1600,6 +1608,9 @@ const STATUS_PILL = { Open:'open', Corrected:'corrected', Closed:'closed' };
 
 // Projects the user collapsed on the projects page. Everything starts open.
 const collapsedProjects = new Set();
+// The status each classification is filtered by on the projects page, e.g.
+// { Contractor: 'Open' }. Empty or missing means every status is shown.
+const projStatusFilter = {};
 // Rendered project groups, in render order — the page's click handlers refer
 // to a project by its index here so a name with quotes in it stays harmless.
 let projectsPageIndex = [];
@@ -1699,8 +1710,26 @@ function renderProjectsPage(){
   const html = TYPE_GROUPS.map(tg => {
     const inType = groups.map((g,i) => ({g, i})).filter(({g}) => (g.type || '') === tg.key);
     if(inType.length === 0) return '';
-    const ipcTotal = inType.reduce((n,{g}) => n + g.reviews.length, 0);
-    const cards = inType.map(({g,i}) => {
+    const typeTotal = inType.reduce((n,{g}) => n + g.reviews.length, 0);
+    const typeCounts = statusCounts(inType.reduce((all,{g}) => all.concat(g.reviews), []));
+    // A status nothing in view carries would empty the block with no way back
+    // — a search can do that to a filter chosen earlier — so it falls away.
+    let active = projStatusFilter[tg.key] || '';
+    if(active && !typeCounts[active]){ active = ''; projStatusFilter[tg.key] = ''; }
+    const shown = !active ? inType : inType
+      .map(({g,i}) => ({ g: Object.assign({}, g, {
+        reviews: g.reviews.filter(r => (r.statusVal || 'Open') === active)
+      }), i }))
+      .filter(({g}) => g.reviews.length > 0);
+    const ipcTotal = shown.reduce((n,{g}) => n + g.reviews.length, 0);
+    const chips = typeTotal === 0 ? '' : [['', 'الكل', typeTotal]]
+      .concat(Object.keys(STATUS_LABELS)
+        .filter(k => typeCounts[k])
+        .map(k => [k, STATUS_LABELS[k], typeCounts[k]]))
+      .map(([key, label, count]) =>
+        `<button type="button" class="chip${key === active ? ' on' : ''}" data-status-filter="${escapeHtml(tg.key)}" data-status="${escapeHtml(key)}">${escapeHtml(label)} (${count})</button>`
+      ).join('');
+    const cards = shown.map(({g,i}) => {
       const counts = statusCounts(g.reviews);
       const collapsed = collapsedProjects.has(g.project) ? ' collapsed' : '';
       const rows = g.reviews.length === 0
@@ -1754,10 +1783,11 @@ function renderProjectsPage(){
       <div class="class-block">
         <div class="class-head">
           <span>${tg.label}</span>
-          <span class="pill">${arCount(inType.length, 'مشروع', 'مشاريع')}</span>
+          <span class="pill">${arCount(shown.length, 'مشروع', 'مشاريع')}</span>
           <span class="pill">${arCount(ipcTotal, 'مستخلص', 'مستخلصات')}</span>
+          <div class="class-filter">${chips}</div>
         </div>
-        ${cards}
+        ${cards || '<div class="empty-note">لا توجد مستخلصات بهذه الحالة.</div>'}
       </div>`;
   }).join('');
 
@@ -1765,6 +1795,13 @@ function renderProjectsPage(){
 }
 
 document.getElementById('projectsBody').addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-status-filter]');
+  if(chip){
+    e.stopPropagation();
+    projStatusFilter[chip.getAttribute('data-status-filter') || ''] = chip.getAttribute('data-status') || '';
+    renderProjectsPage();
+    return;
+  }
   const exportBtn = e.target.closest('[data-export]');
   if(exportBtn){
     e.stopPropagation();
